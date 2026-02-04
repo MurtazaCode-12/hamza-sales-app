@@ -1,0 +1,32 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"  // <--- Crucial: set to postgresql
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Order {
+  id          String      @id @default(cuid())
+  createdAt   DateTime    @default(now())
+  shopName    String
+  ownerName   String?
+  phone       String
+  address     String?
+  status      String      @default("PENDING") // PENDING, APPROVED
+  totalItems  Int
+  items       OrderItem[]
+}
+
+model OrderItem {
+  id            String  @id @default(cuid())
+  productName   String
+  variantDetail String
+  qty           Int
+  orderId       String
+  order         Order   @relation(fields: [orderId], references: [id])
+}
