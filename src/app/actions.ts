@@ -2,8 +2,6 @@
 
 import { PrismaClient } from "@prisma/client";
 import { revalidatePath } from "next/cache";
-import fs from 'fs';
-import path from 'path';
 
 // Prevent multiple instances in development
 const globalForPrisma = global as unknown as { prisma: PrismaClient };
@@ -134,16 +132,60 @@ export async function getAllHotspots() {
   }
 }
 
-// 10. Automatically Fetch all local images in public/product
+// 10. Catalog image list (static for Vercel serverless compatibility)
 export async function getCatalogImages() {
-  try {
-    const dir = path.join(process.cwd(), 'public', 'product');
-    const files = fs.readdirSync(dir);
-    // Sort array alphanumerically
-    const sorted = files.filter(f => f.match(/\.(jpg|jpeg|png|webp)$/i)).sort((a,b) => a.localeCompare(b));
-    return sorted;
-  } catch (error) {
-    console.error("Error reading product images folder", error);
-    return [];
-  }
+  // Hardcoded list of all images in public/product.
+  // Add new filenames here whenever you add more catalog pages.
+  return [
+    "Hamza Trading Co(Pune) New_page-0002.jpg",
+    "Hamza Trading Co(Pune) New_page-0003.jpg",
+    "Hamza Trading Co(Pune) New_page-0004.jpg",
+    "Hamza Trading Co(Pune) New_page-0005.jpg",
+    "Hamza Trading Co(Pune) New_page-0006.jpg",
+    "Hamza Trading Co(Pune) New_page-0007.jpg",
+    "Hamza Trading Co(Pune) New_page-0008.jpg",
+    "Hamza Trading Co(Pune) New_page-0009.jpg",
+    "Hamza Trading Co(Pune) New_page-0010.jpg",
+    "Hamza Trading Co(Pune) New_page-0011.jpg",
+    "Hamza Trading Co(Pune) New_page-0012.jpg",
+    "Hamza Trading Co(Pune) New_page-0013.jpg",
+    "Hamza Trading Co(Pune) New_page-0014.jpg",
+    "Hamza Trading Co(Pune) New_page-0015.jpg",
+    "Hamza Trading Co(Pune) New_page-0016.jpg",
+    "Hamza Trading Co(Pune) New_page-0017.jpg",
+    "Hamza Trading Co(Pune) New_page-0018.jpg",
+    "Hamza Trading Co(Pune) New_page-0019.jpg",
+    "Hamza Trading Co(Pune) New_page-0020.jpg",
+    "Hamza Trading Co(Pune) New_page-0021.jpg",
+    "Hamza Trading Co(Pune) New_page-0022.jpg",
+    "Hamza Trading Co(Pune) New_page-0023.jpg",
+    "Hamza Trading Co(Pune) New_page-0024.jpg",
+    "Hamza Trading Co(Pune) New_page-0025.jpg",
+    "Hamza Trading Co(Pune) New_page-0026.jpg",
+    "Hamza Trading Co(Pune) New_page-0027.jpg",
+    "Hamza Trading Co(Pune) New_page-0028.jpg",
+    "Hamza Trading Co(Pune) New_page-0029.jpg",
+    "Hamza Trading Co(Pune) New_page-0030.jpg",
+    "Hamza Trading Co(Pune) New_page-0031.jpg",
+    "Hamza Trading Co(Pune) New_page-0032.jpg",
+    "Hamza Trading Co(Pune) New_page-0033.jpg",
+    "Hamza Trading Co(Pune) New_page-0034.jpg",
+    "Hamza Trading Co(Pune) New_page-0035.jpg",
+    "Hamza Trading Co(Pune) New_page-0036.jpg",
+    "Hamza Trading Co(Pune) New_page-0037.jpg",
+    "Hamza Trading Co(Pune) New_page-0038.jpg",
+    "Hamza Trading Co(Pune) New_page-0039.jpg",
+    "Hamza Trading Co(Pune) New_page-0040.jpg",
+    "Hamza Trading Co(Pune) New_page-0041.jpg",
+    "Hamza Trading Co(Pune) New_page-0042.jpg",
+    "Hamza Trading Co(Pune) New_page-0043.jpg",
+    "Hamza Trading Co(Pune) New_page-0044.jpg",
+    "Hamza Trading Co(Pune) New_page-0045.jpg",
+    "Hamza Trading Co(Pune) New_page-0046.jpg",
+    "Hamza Trading Co(Pune) New_page-0047.jpg",
+    "Hamza Trading Co(Pune) New_page-0048.jpg",
+    "Hamza Trading Co(Pune) New_page-0049.jpg",
+    "Hamza Trading Co(Pune) New_page-0050.jpg",
+    "Hamza Trading Co(Pune) New_page-0051.jpg",
+  ];
 }
