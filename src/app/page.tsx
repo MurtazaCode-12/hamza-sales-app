@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { CATALOG, Product, Variant } from "@/lib/data";
 import { useStore } from "@/context/StoreContext";
 import { Search, ShoppingCart, LayoutDashboard, Plus, ChevronDown, ChevronUp, Package } from "lucide-react";
@@ -8,11 +8,20 @@ import Image from "next/image";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import ShoppableCatalogImage from "@/components/ShoppableCatalogImage";
+import { getAllHotspots, getCatalogImages } from "@/app/actions";
 
 export default function Home() {
   const [activeCategory, setActiveCategory] = useState("All");
   const [search, setSearch] = useState("");
   const { cart } = useStore();
+  const [allHotspots, setAllHotspots] = useState<any[]>([]);
+  const [catalogPages, setCatalogPages] = useState<string[]>([]);
+
+  useEffect(() => {
+    getAllHotspots().then(setAllHotspots);
+    getCatalogImages().then(setCatalogPages);
+  }, []);
 
   const categories = ["All", ...Array.from(new Set(CATALOG.map((p) => p.category)))];
 
@@ -72,6 +81,24 @@ export default function Home() {
             ))}
           </div>
         </div>
+      </div>
+
+      {/* === HERO HOTSPOT === */}
+      <div className="px-4 pt-6 pb-2 max-w-5xl mx-auto space-y-8">
+        {catalogPages.map((page, i) => {
+          const pageHotspots = allHotspots.filter(h => h.imageId === page);
+          
+          // Only show pages that have hotspots, or always show the first page so it's not totally empty!
+          if (pageHotspots.length === 0 && i !== 2) return null; // Force showing index 2 (0004.jpg) as placeholder if DB is totally empty
+          
+          return (
+            <ShoppableCatalogImage 
+              key={page}
+              imageSrc={`/product/${page}`}
+              hotspots={pageHotspots}
+            />
+          );
+        })}
       </div>
 
       {/* === PRODUCT GRID === */}

@@ -30,3 +30,17 @@ model OrderItem {
   orderId       String
   order         Order   @relation(fields: [orderId], references: [id])
 }
+
+model CatalogHotspot {
+  id          String   @id @default(cuid())
+  imageId     String   // e.g., "Hamza Trading Co(Pune) New_page-0004.jpg"
+  name        String
+  types       String[] // Stored as array
+  sizes       String[]
+  top         Float
+  left        Float
+  width       Float
+  height      Float
+  price       String?
+  createdAt   DateTime @default(now())
+}

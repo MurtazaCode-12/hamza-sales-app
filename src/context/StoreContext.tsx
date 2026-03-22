@@ -15,6 +15,7 @@ interface StoreState {
   cart: CartItem[];
   addToCart: (item: CartItem) => void;
   removeFromCart: (variantId: string) => void;
+  updateCartQty: (variantId: string, qty: number) => void;
   clearCart: () => void;
   
   // New Client Fields
@@ -60,6 +61,7 @@ export const StoreProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const removeFromCart = (id: string) => setCart(prev => prev.filter(i => i.variantId !== id));
+  const updateCartQty = (id: string, qty: number) => setCart(prev => prev.map(i => i.variantId === id ? { ...i, qty } : i));
   const clearCart = () => setCart([]);
 
   return (
@@ -67,6 +69,7 @@ export const StoreProvider = ({ children }: { children: React.ReactNode }) => {
       cart, 
       addToCart, 
       removeFromCart, 
+      updateCartQty,
       clearCart,
       selectedClient, // <--- Passing these down
       setClient       // <--- Passing these down
