@@ -159,7 +159,7 @@ export default function CatalogStudio() {
               onPointerUp={handlePointerUp}
             >
               <Image 
-                src={`/product/${selectedImage}`} 
+                src={`/product/${encodeURIComponent(selectedImage)}`} 
                 alt="Catalog Page Canvas" 
                 width={1000} 
                 height={1414} 

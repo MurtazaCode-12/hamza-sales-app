@@ -53,7 +53,7 @@ export default function ShoppableCatalogImage({ imageSrc, hotspots }: ShoppableC
     <div className="relative w-full max-w-4xl mx-auto rounded-xl overflow-hidden shadow-sm border border-slate-200 bg-white">
       {/* Background Catalog Image */}
       <Image 
-        src={imageSrc} 
+        src={`/product/${encodeURIComponent(imageSrc.replace('/product/', ''))}`} 
         alt="Interactive Shoppable Catalog" 
         width={1000} 
         height={1414} 
