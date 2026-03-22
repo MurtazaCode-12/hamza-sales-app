@@ -2,260 +2,229 @@
 
 import { useState } from "react";
 import { useStore } from "@/context/StoreContext";
-import { Trash2, ArrowLeft, CheckCircle, X, Plus, Minus, Store, ClipboardList, ShoppingCart, User, MapPin, Phone } from "lucide-react";
-import Image from "next/image";
+import { Trash2, ArrowLeft, CheckCircle, X, Plus, Minus, Store, ClipboardList, ShoppingCart, User, MapPin, Phone, Zap, Send } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { createOrder } from "@/app/actions"; 
-import { toast } from "sonner"; 
-
-const BRAND_BROWN = "bg-[#4A2B1D]";
-const BRAND_TEXT = "text-[#4A2B1D]";
+import { createOrder, approveOrder } from "@/app/actions";
+import { toast } from "sonner";
 
 export default function CartPage() {
   const { cart, removeFromCart, updateCartQty, clearCart, selectedClient } = useStore();
   const router = useRouter();
 
-  const [guestDetails, setGuestDetails] = useState({
+  const [details, setDetails] = useState({
     shopName: selectedClient?.shopName || "",
     phone: selectedClient?.phone || "",
     address: selectedClient?.city || "",
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  
+  const [submitMode, setSubmitMode] = useState<'send' | 'self' | null>(null);
+
   const totalItems = cart.reduce((acc, item) => acc + item.qty, 0);
-  const uniqueItems = cart.length;
+  const isFormValid = details.shopName && details.phone && details.address;
 
-  const handleInputChange = (field: string, value: string) => {
-    setGuestDetails(prev => ({ ...prev, [field]: value }));
-  };
-
-  const isFormValid = guestDetails.shopName && guestDetails.phone && guestDetails.address;
-
-  const handleApprovalRequest = async () => {
+  const handleSubmit = async (mode: 'send' | 'self') => {
     if (!isFormValid) {
       toast.error("Missing Details", { description: "Please enter Shop Name, Phone, and Address." });
       return;
     }
-
     setIsSubmitting(true);
-
+    setSubmitMode(mode);
     try {
-      const result = await createOrder(guestDetails, cart);
-
-      if (result.success && result.orderId) {
-        const protocol = window.location.protocol;
-        const host = window.location.host;
-        const clientLink = `${protocol}//${host}/order/${result.orderId}`;
-
-        let message = `*APPROVAL REQUEST*\n`;
-        message += `Hello ${guestDetails.shopName},\n`;
-        message += `Please review and approve your order using this secure link:\n\n`;
-        message += `${clientLink}\n\n`;
-        message += `Total Items: ${totalItems}`;
-
-        toast.success("Order Created!", { description: "Opening WhatsApp now..." });
-
-        const targetPhone = guestDetails.phone.replace(/\D/g, ''); 
-        const url = `https://wa.me/${targetPhone}?text=${encodeURIComponent(message)}`;
-        window.open(url, '_blank');
-        
-        clearCart();
-        router.push(`/order/${result.orderId}?view=agent`); 
-
-      } else {
+      const result = await createOrder(details, cart);
+      if (!result.success || !result.orderId) {
         toast.error("Database Error", { description: "Could not save the order." });
+        return;
       }
-    } catch (error) {
-      console.error(error);
-      toast.error("System Error", { description: "Something went wrong." });
+
+      if (mode === 'send') {
+        // Send WhatsApp approval link
+        const clientLink = `${window.location.origin}/order/${result.orderId}`;
+        const message = `*ORDER APPROVAL*\nHello ${details.shopName},\nPlease review and approve your order:\n\n${clientLink}\n\nTotal: ${totalItems} items`;
+        const phone = details.phone.replace(/\D/g, '');
+        toast.success("Order Created!", { description: "Opening WhatsApp..." });
+        window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
+      } else {
+        // Self-approve immediately
+        await approveOrder(result.orderId);
+        toast.success("Order Self-Approved!", { description: "Order confirmed and ready to dispatch." });
+      }
+      clearCart();
+      router.push(`/order/${result.orderId}?view=agent`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Error", { description: "Something went wrong." });
     } finally {
       setIsSubmitting(false);
+      setSubmitMode(null);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#F9F9F9] pb-32 font-sans selection:bg-[#4A2B1D] selection:text-white">
-      
+    <div className="min-h-screen bg-slate-50 pb-32 font-sans">
+
       {/* === HEADER === */}
-      <div className="bg-white px-4 py-4 sticky top-0 z-20 shadow-sm flex items-center justify-between border-b border-slate-100">
+      <div className="bg-white px-4 py-4 sticky top-0 z-20 border-b border-slate-100 flex items-center justify-between shadow-sm">
         <Link href="/">
-           <button className="p-2 -ml-2 text-slate-900 hover:bg-slate-50 rounded-full transition-colors">
-             <ArrowLeft size={24} />
-           </button>
+          <button className="p-2 -ml-2 hover:bg-slate-50 rounded-full transition-colors text-slate-700">
+            <ArrowLeft size={22} />
+          </button>
         </Link>
-        <h1 className="font-serif font-bold text-xl text-slate-900">Shopping Cart</h1>
-        <button onClick={clearCart} className="p-2 -mr-2 text-red-500 hover:bg-red-50 rounded-full transition-colors">
-          <Trash2 size={20} />
+        <div className="text-center">
+          <h1 className="font-bold text-slate-900 text-base leading-tight">Your Cart</h1>
+          <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">{totalItems} items</p>
+        </div>
+        <button onClick={clearCart} className="p-2 -mr-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors">
+          <Trash2 size={18} />
         </button>
       </div>
 
-      <div className="px-4 pt-6 max-w-2xl mx-auto space-y-6">
-        
+      <div className="px-4 pt-5 max-w-lg mx-auto space-y-4">
+
+        {/* Cart empty state */}
+        {cart.length === 0 && (
+          <div className="text-center py-20 flex flex-col items-center opacity-50">
+            <ShoppingCart size={52} className="mb-4 text-slate-300" strokeWidth={1} />
+            <p className="font-semibold text-slate-500">Your cart is empty</p>
+            <Link href="/" className="mt-4 text-sm text-blue-500 font-medium underline">Browse catalog</Link>
+          </div>
+        )}
+
         {/* === CART ITEMS === */}
-        <div className="space-y-4">
-          {cart.map((item) => (
-            <div key={item.variantId} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex flex-col gap-4">
-              <div className="flex gap-4">
-                {/* Simulated Image Box matching your mockup */}
-                <div className="h-20 w-20 bg-zinc-900 rounded-xl p-2 shrink-0 shadow-inner flex items-center justify-center relative overflow-hidden">
-                   <Store className="text-white/20" size={32} />
-                </div>
-                
-                <div className="pt-1 flex-1">
-                  <h3 className="font-serif font-bold text-slate-900 text-[16px] leading-tight mb-1">
-                    {item.productName}
-                  </h3>
-                  <p className="text-[11px] text-slate-500 uppercase tracking-wider">
-                    SKU: {item.productId.substring(0, 6)} | {item.variantDetail}
-                  </p>
-                </div>
+        {cart.map((item) => (
+          <div key={item.variantId} className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="flex gap-3 p-4">
+              <div className="h-16 w-16 bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl flex items-center justify-center shrink-0">
+                <Store className="text-white/30" size={24} />
               </div>
-
-              {/* Bottom Row: Remove & Quantity */}
-              <div className="flex justify-between items-center pt-2 border-t border-slate-50">
-                <button 
-                  onClick={() => removeFromCart(item.variantId)}
-                  className="flex items-center gap-1.5 text-slate-400 hover:text-red-500 text-[12px] font-semibold transition-colors"
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-slate-900 text-sm leading-snug truncate">{item.productName}</h3>
+                <p className="text-[11px] text-slate-400 mt-0.5 font-medium">{item.variantDetail}</p>
+              </div>
+              <button onClick={() => removeFromCart(item.variantId)} className="self-start text-slate-200 hover:text-red-400 transition-colors p-1">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="border-t border-slate-50 px-4 py-3 flex items-center justify-between bg-slate-50/50">
+              <span className="text-xs text-slate-400 font-medium">Quantity</span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => updateCartQty(item.variantId, Math.max(1, item.qty - 1))}
+                  className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:border-slate-400 transition-all active:scale-95"
                 >
-                  <X size={14} /> Remove
+                  <Minus size={13} />
                 </button>
-
-                <div className="flex items-center gap-2">
-                  <div className="flex h-10 bg-white rounded-lg border border-slate-200 items-center overflow-hidden w-[90px]">
-                    <button 
-                      onClick={() => updateCartQty(item.variantId, Math.max(1, item.qty - 1))}
-                      className="w-8 h-full flex justify-center items-center text-slate-400 hover:text-slate-800 transition-colors"
-                    >
-                      <Minus size={14} />
-                    </button>
-                    <span className="flex-1 text-center font-bold text-[13px] text-slate-900">
-                      {item.qty}
-                    </span>
-                  </div>
-                  
-                  <button 
-                    onClick={() => updateCartQty(item.variantId, item.qty + 1)}
-                    className={`${BRAND_BROWN} text-white h-10 w-10 rounded-lg flex items-center justify-center hover:bg-[#321C10] shadow-md shadow-[#4A2B1D]/20 active:scale-95 transition-all`}
-                  >
-                    <Plus size={18} strokeWidth={2.5} />
-                  </button>
-                </div>
+                <span className="w-8 text-center font-bold text-slate-900 text-sm">{item.qty}</span>
+                <button
+                  onClick={() => updateCartQty(item.variantId, item.qty + 1)}
+                  className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center hover:bg-slate-700 transition-all active:scale-95"
+                >
+                  <Plus size={13} />
+                </button>
               </div>
             </div>
-          ))}
+          </div>
+        ))}
 
-          {cart.length === 0 && (
-            <div className="text-center py-16 flex flex-col items-center opacity-50 bg-white rounded-2xl border border-slate-100">
-               <ShoppingCart size={48} className="mb-3 text-slate-300" strokeWidth={1} />
-               <p className="text-sm font-medium text-slate-500">Your cart is empty</p>
-            </div>
-          )}
-        </div>
-
-        {/* === CLIENT DETAILS FORM === */}
+        {/* === CLIENT DETAILS === */}
         {cart.length > 0 && (
-          <div className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm space-y-4">
-             <h2 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em]">Client Information</h2>
-             
-             <div className="space-y-3">
-                <div className="relative">
-                  <Store className="absolute left-3 top-3.5 text-slate-400" size={16} />
-                  <input 
-                    type="text" placeholder="Shop Name"
-                    className="w-full pl-10 h-12 bg-slate-50 border border-slate-100 rounded-xl focus:ring-2 focus:ring-[#4A2B1D]/20 focus:border-[#4A2B1D] outline-none text-sm font-medium text-slate-900"
-                    value={guestDetails.shopName} onChange={(e) => handleInputChange("shopName", e.target.value)}
-                  />
-                </div>
-                <div className="relative">
-                  <Phone className="absolute left-3 top-3.5 text-slate-400" size={16} />
-                  <input 
-                    type="tel" placeholder="Phone Number"
-                    className="w-full pl-10 h-12 bg-slate-50 border border-slate-100 rounded-xl focus:ring-2 focus:ring-[#4A2B1D]/20 focus:border-[#4A2B1D] outline-none text-sm font-medium text-slate-900"
-                    value={guestDetails.phone} onChange={(e) => handleInputChange("phone", e.target.value)}
-                  />
-                </div>
-                <div className="relative">
-                  <MapPin className="absolute left-3 top-3.5 text-slate-400" size={16} />
-                  <input 
-                    type="text" placeholder="Delivery Address"
-                    className="w-full pl-10 h-12 bg-slate-50 border border-slate-100 rounded-xl focus:ring-2 focus:ring-[#4A2B1D]/20 focus:border-[#4A2B1D] outline-none text-sm font-medium text-slate-900"
-                    value={guestDetails.address} onChange={(e) => handleInputChange("address", e.target.value)}
-                  />
-                </div>
-             </div>
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-3">
+            <h2 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Client Details</h2>
+            {[
+              { icon: Store, placeholder: "Shop Name", field: "shopName", type: "text" },
+              { icon: Phone, placeholder: "Phone Number", field: "phone", type: "tel" },
+              { icon: MapPin, placeholder: "Delivery Address", field: "address", type: "text" },
+            ].map(({ icon: Icon, placeholder, field, type }) => (
+              <div key={field} className="relative">
+                <Icon className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300" size={15} />
+                <input
+                  type={type}
+                  placeholder={placeholder}
+                  className="w-full pl-10 h-12 bg-slate-50 border border-slate-150 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 outline-none text-sm font-medium text-slate-900 placeholder:text-slate-300 transition-all"
+                  value={(details as any)[field]}
+                  onChange={(e) => setDetails(prev => ({ ...prev, [field]: e.target.value }))}
+                />
+              </div>
+            ))}
           </div>
         )}
 
-        {/* === ORDER SUMMARY === */}
+        {/* === ORDER SUMMARY + ACTION BUTTONS === */}
         {cart.length > 0 && (
-          <div className="bg-white border-t border-slate-200 mt-8 pt-6 pb-2 px-2">
-            <div className="space-y-3 text-sm text-slate-500 font-medium mb-6">
-              <div className="flex justify-between">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-4">
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between text-slate-500">
                 <span>Unique Products</span>
-                <span className="text-slate-900">{uniqueItems}</span>
+                <span className="font-bold text-slate-900">{cart.length}</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between text-slate-500">
                 <span>Total Quantity</span>
-                <span className="text-slate-900">{totalItems} Units</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Shipping (Freight)</span>
-                <span className="text-green-600 font-bold">To be calculated</span>
+                <span className="font-bold text-slate-900">{totalItems} units</span>
               </div>
             </div>
 
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="font-serif font-bold text-xl text-slate-900">Total Order</h2>
-              <span className="font-serif font-bold text-2xl text-[#4A2B1D]">{totalItems} Items</span>
-            </div>
+            <div className="border-t border-slate-100 pt-4 space-y-3">
+              {/* Send for Approval via WhatsApp */}
+              <button
+                onClick={() => handleSubmit('send')}
+                disabled={!isFormValid || isSubmitting}
+                className={cn(
+                  "w-full h-13 rounded-xl flex items-center justify-center gap-2.5 font-bold text-sm transition-all py-3.5",
+                  isFormValid
+                    ? "bg-[#25D366] hover:bg-[#1ebe59] text-white shadow-lg shadow-green-500/20 active:scale-[0.98]"
+                    : "bg-slate-100 text-slate-300 cursor-not-allowed"
+                )}
+              >
+                {isSubmitting && submitMode === 'send'
+                  ? <span className="animate-pulse">Generating Link...</span>
+                  : <><Send size={16} /> Send for Approval (WhatsApp)</>}
+              </button>
 
-            <button 
-              onClick={handleApprovalRequest}
-              disabled={!isFormValid || isSubmitting}
-              className={cn(
-                "w-full h-14 rounded-xl flex items-center justify-center gap-2 font-bold text-[15px] transition-all",
-                isFormValid 
-                  ? `${BRAND_BROWN} hover:bg-[#321C10] text-white shadow-lg shadow-[#4A2B1D]/30 active:scale-[0.98]`
-                  : "bg-slate-200 text-slate-400 cursor-not-allowed"
-              )}
-            >
-              {isSubmitting ? "Generating Secure Link..." : (
-                <>
-                  <CheckCircle size={20} /> Place Order
-                </>
-              )}
-            </button>
+              {/* Self Approve */}
+              <button
+                onClick={() => handleSubmit('self')}
+                disabled={!isFormValid || isSubmitting}
+                className={cn(
+                  "w-full h-13 rounded-xl flex items-center justify-center gap-2.5 font-bold text-sm transition-all py-3.5",
+                  isFormValid
+                    ? "bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20 active:scale-[0.98]"
+                    : "bg-slate-100 text-slate-300 cursor-not-allowed"
+                )}
+              >
+                {isSubmitting && submitMode === 'self'
+                  ? <span className="animate-pulse">Approving...</span>
+                  : <><Zap size={16} /> Self Approve &amp; Confirm</>}
+              </button>
+
+              <p className="text-center text-[10px] text-slate-400 font-medium">
+                Self Approve instantly marks the order as confirmed
+              </p>
+            </div>
           </div>
         )}
       </div>
 
-      {/* === BOTTOM NAVIGATION === */}
-      <div className="fixed bottom-0 inset-x-0 bg-white border-t border-slate-100 px-6 py-3 flex justify-between items-center z-40 pb-safe shadow-[0_-10px_20px_-10px_rgba(0,0,0,0.05)]">
-         <Link href="/" className="w-full">
-            <NavIcon icon={<Store size={22} />} label="Catalog" />
-         </Link>
-         <Link href="/dashboard" className="w-full">
-            <NavIcon icon={<ClipboardList size={22} />} label="Orders" />
-         </Link>
-         <NavIcon icon={<ShoppingCart size={22} />} label="Cart" active />
-         <NavIcon icon={<User size={22} />} label="Profile" />
+      {/* === BOTTOM NAV === */}
+      <div className="fixed bottom-0 inset-x-0 bg-white/90 backdrop-blur-md border-t border-slate-100 px-6 py-3 flex justify-between items-center z-40">
+        <Link href="/" className="flex flex-col items-center gap-0.5 text-slate-400 hover:text-slate-700 transition-colors w-full">
+          <Store size={20} />
+          <span className="text-[9px] font-bold tracking-wide uppercase">Catalog</span>
+        </Link>
+        <Link href="/dashboard" className="flex flex-col items-center gap-0.5 text-slate-400 hover:text-slate-700 transition-colors w-full">
+          <ClipboardList size={20} />
+          <span className="text-[9px] font-bold tracking-wide uppercase">Orders</span>
+        </Link>
+        <div className="flex flex-col items-center gap-0.5 text-blue-600 w-full">
+          <ShoppingCart size={20} />
+          <span className="text-[9px] font-bold tracking-wide uppercase">Cart</span>
+        </div>
+        <div className="flex flex-col items-center gap-0.5 text-slate-300 w-full">
+          <User size={20} />
+          <span className="text-[9px] font-bold tracking-wide uppercase">Profile</span>
+        </div>
       </div>
-    </div>
-  );
-}
-
-// === SUB-COMPONENT: Navigation Icon ===
-function NavIcon({ icon, label, active = false }: { icon: React.ReactNode, label: string, active?: boolean }) {
-  return (
-    <div className={cn(
-      "flex flex-col items-center gap-1 w-full",
-      active ? BRAND_TEXT : "text-slate-400 hover:text-slate-600"
-    )}>
-      {icon}
-      <span className="text-[10px] font-bold tracking-wide">{label}</span>
     </div>
   );
 }
