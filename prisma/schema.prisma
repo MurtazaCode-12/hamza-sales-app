@@ -20,6 +20,8 @@ model Order {
   status      String      @default("PENDING") // PENDING, APPROVED
   totalItems  Int
   items       OrderItem[]
+
+  @@index([createdAt])
 }
 
 model OrderItem {
@@ -43,4 +45,6 @@ model CatalogHotspot {
   height      Float
   price       String?
   createdAt   DateTime @default(now())
+
+  @@index([imageId])
 }

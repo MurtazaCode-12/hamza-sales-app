@@ -21,9 +21,18 @@ export type ProductHotspot = {
 interface ShoppableCatalogImageProps {
   imageSrc: string;
   hotspots: ProductHotspot[];
+  priority?: boolean;
+  highlightProductId?: string;
+  onHighlightClear?: () => void;
 }
 
-export default function ShoppableCatalogImage({ imageSrc, hotspots }: ShoppableCatalogImageProps) {
+export default function ShoppableCatalogImage({ 
+  imageSrc, 
+  hotspots, 
+  priority = false,
+  highlightProductId,
+  onHighlightClear
+}: ShoppableCatalogImageProps) {
   const [selectedProduct, setSelectedProduct] = useState<ProductHotspot | null>(null);
   const [selectedType, setSelectedType] = useState<string>('');
   const [selectedSize, setSelectedSize] = useState<string>('');
@@ -34,6 +43,16 @@ export default function ShoppableCatalogImage({ imageSrc, hotspots }: ShoppableC
     setSelectedType(product.types[0] || '');
     setSelectedSize(product.sizes[0] || '');
   };
+
+  React.useEffect(() => {
+    if (highlightProductId) {
+      const match = hotspots.find(h => h.id === highlightProductId);
+      if (match) {
+        handleOpen(match);
+        onHighlightClear?.();
+      }
+    }
+  }, [highlightProductId, hotspots, onHighlightClear]);
 
   const handleAddToCart = () => {
     if (selectedProduct) {
@@ -58,7 +77,7 @@ export default function ShoppableCatalogImage({ imageSrc, hotspots }: ShoppableC
         width={1000} 
         height={1414} 
         className="w-full h-auto object-contain block"
-        priority
+        priority={priority}
       />
 
       {/* Transparent Clickable Overlays */}
