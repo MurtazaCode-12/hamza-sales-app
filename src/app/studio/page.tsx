@@ -9,11 +9,6 @@ import {
   saveMultipleHotspots,
   getCatalogImages
 } from '@/app/actions';
-import {
-  autoDetectProducts,
-  loadCocoSsdModel,
-  DetectedBox
-} from '@/lib/autoDetector';
 import { toast } from 'sonner';
 import {
   Trash2,
@@ -22,22 +17,20 @@ import {
   Sparkles,
   Check,
   Edit2,
-  Move,
   Layers,
-  RefreshCw,
-  Plus,
   Save,
   X,
   Scan,
-  Cpu,
-  HelpCircle,
-  Eye,
-  SlidersHorizontal
+  Upload,
+  Key,
+  Bot,
+  Image as ImageIcon,
+  ArrowRight
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 export interface StudioHotspot {
-  id: string; // generated client-side id for drafts, cuid for saved
+  id: string;
   imageId: string;
   name: string;
   types: string[];
@@ -49,8 +42,8 @@ export interface StudioHotspot {
   price?: string | null;
   isDraft?: boolean;
   confidence?: number;
-  source?: 'ai' | 'contour' | 'manual';
-  isDirty?: boolean; // edited position but not yet saved to DB
+  source?: 'gemini' | 'manual';
+  isDirty?: boolean;
 }
 
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
@@ -58,20 +51,23 @@ type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 export default function CatalogStudio() {
   const [catalogPages, setCatalogPages] = useState<string[]>([]);
   const [selectedImage, setSelectedImage] = useState<string>('');
+  const [customUploadedSrc, setCustomUploadedSrc] = useState<string | null>(null);
+  const [customUploadedName, setCustomUploadedName] = useState<string>('');
+  
   const [savedHotspots, setSavedHotspots] = useState<StudioHotspot[]>([]);
   const [draftHotspots, setDraftHotspots] = useState<StudioHotspot[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Model & Detection State
-  const [modelStatus, setModelStatus] = useState<'unloaded' | 'loading' | 'ready' | 'error'>('unloaded');
-  const [modelStatusText, setModelStatusText] = useState('Initializing AI...');
-  const [isDetecting, setIsDetecting] = useState(false);
-  const [autoDetectOnSwitch, setAutoDetectOnSwitch] = useState(true);
-  const [detectionMode, setDetectionMode] = useState<'hybrid' | 'ai' | 'contour'>('hybrid');
+  // Gemini API & Loading State
+  const [isGeminiAnalyzing, setIsGeminiAnalyzing] = useState(false);
+  const [geminiApiKey, setGeminiApiKey] = useState<string>('');
+  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
+  const [tempApiKeyInput, setTempApiKeyInput] = useState('');
 
   // Canvas Refs & Dimensions
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const imageElementRef = useRef<HTMLImageElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Selected Box & Interaction State
   const [selectedHotspotId, setSelectedHotspotId] = useState<string | null>(null);
@@ -87,19 +83,13 @@ export default function CatalogStudio() {
   const [formData, setFormData] = useState({ name: '', price: '', types: '', sizes: '' });
   const [isSaving, setIsSaving] = useState(false);
 
-  // Preload AI model in background
+  // Load API Key from localStorage
   useEffect(() => {
-    setModelStatus('loading');
-    loadCocoSsdModel((text) => setModelStatusText(text))
-      .then(() => {
-        setModelStatus('ready');
-        setModelStatusText('AI Ready (COCO-SSD)');
-      })
-      .catch((err) => {
-        console.error('Model failed to load:', err);
-        setModelStatus('error');
-        setModelStatusText('Model Error (Contour Only)');
-      });
+    const savedKey = localStorage.getItem('gemini_api_key');
+    if (savedKey) {
+      setGeminiApiKey(savedKey);
+      setTempApiKeyInput(savedKey);
+    }
   }, []);
 
   // Fetch catalog pages list
@@ -110,12 +100,12 @@ export default function CatalogStudio() {
     });
   }, []);
 
-  // Load saved hotspots whenever selected image changes
+  // Load saved hotspots whenever selected catalog image changes
   useEffect(() => {
-    if (selectedImage) {
+    if (selectedImage && !customUploadedSrc) {
       loadSavedHotspots(selectedImage);
     }
-  }, [selectedImage]);
+  }, [selectedImage, customUploadedSrc]);
 
   const loadSavedHotspots = async (imageId: string) => {
     const data = await getHotspotsByImage(imageId);
@@ -124,81 +114,112 @@ export default function CatalogStudio() {
       isDraft: false,
     }));
     setSavedHotspots(mapped);
-    setDraftHotspots([]); // clear drafts for new page
+    setDraftHotspots([]);
     setSelectedHotspotId(null);
   };
 
-  // Run Auto Detection on the current image
-  const handleRunAutoDetect = useCallback(async () => {
-    if (!imageElementRef.current) {
-      toast.error('Image element not loaded yet');
-      return;
+  // Convert current image (or uploaded image) to base64 for Gemini
+  const getImageBase64 = async (): Promise<string> => {
+    if (customUploadedSrc) {
+      return customUploadedSrc;
     }
+    // Fetch image from public path and convert to base64
+    const response = await fetch(`/product/${selectedImage}`);
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
 
-    setIsDetecting(true);
-    toast.info('Analyzing catalog page for products...', { duration: 2000 });
+  // Call Gemini 1.5 Flash API for Object Detection
+  const runGeminiDetection = async (base64Override?: string) => {
+    setIsGeminiAnalyzing(true);
+    toast.info('Sending image to Gemini 1.5 Flash for product detection...', { duration: 3000 });
 
     try {
-      const results: DetectedBox[] = await autoDetectProducts(
-        imageElementRef.current,
-        detectionMode
-      );
+      const base64Data = base64Override || (await getImageBase64());
+      const currentImageId = customUploadedSrc ? customUploadedName : selectedImage;
 
-      if (results.length === 0) {
-        toast.info('No new distinct products identified automatically on this page.');
-        setIsDetecting(false);
+      const res = await fetch('/api/gemini-detect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: base64Data,
+          mimeType: 'image/jpeg',
+          apiKey: geminiApiKey || undefined,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        if (data.error === 'MISSING_API_KEY') {
+          setIsApiKeyModalOpen(true);
+          toast.error('Gemini API key is required. Please enter your API key.');
+        } else {
+          toast.error(`Gemini Error: ${data.message || data.error}`);
+        }
+        setIsGeminiAnalyzing(false);
         return;
       }
 
-      // Convert detected boxes to draft hotspots (filter out overlaps with already saved hotspots)
-      const newDrafts: StudioHotspot[] = results
-        .filter((detected) => {
-          // Check if it significantly overlaps with any existing saved hotspot
-          return !savedHotspots.some((saved) => {
-            const xOverlap = Math.max(0, Math.min(detected.left + detected.width, saved.left + saved.width) - Math.max(detected.left, saved.left));
-            const yOverlap = Math.max(0, Math.min(detected.top + detected.height, saved.top + saved.height) - Math.max(detected.top, saved.top));
-            const overlapArea = xOverlap * yOverlap;
-            const detArea = detected.width * detected.height;
-            return detArea > 0 && overlapArea / detArea > 0.5;
-          });
-        })
-        .map((detected, idx) => ({
-          id: `draft-${Date.now()}-${idx}`,
-          imageId: selectedImage,
-          name: detected.name || `Product #${idx + 1}`,
-          types: [],
-          sizes: [],
-          top: detected.top,
-          left: detected.left,
-          width: detected.width,
-          height: detected.height,
-          price: '',
-          isDraft: true,
-          confidence: detected.confidence,
-          source: detected.source,
-        }));
-
-      if (newDrafts.length === 0) {
-        toast.info('All detected products are already tagged on this page.');
-      } else {
-        setDraftHotspots(newDrafts);
-        toast.success(`✨ Auto-detected ${newDrafts.length} product highlight${newDrafts.length > 1 ? 's' : ''}!`, {
-          description: 'You can now adjust, resize, edit or save them.',
-        });
+      if (!data.products || data.products.length === 0) {
+        toast.info('Gemini analyzed the image but did not detect distinct products.');
+        setIsGeminiAnalyzing(false);
+        return;
       }
-    } catch (err) {
-      console.error('Detection error:', err);
-      toast.error('Auto-detection encountered an error');
-    } finally {
-      setIsDetecting(false);
-    }
-  }, [detectionMode, selectedImage, savedHotspots]);
 
-  // Run auto detection when image finishes loading (if auto-detect enabled & no saved hotspots yet)
-  const handleImageLoaded = () => {
-    if (autoDetectOnSwitch && savedHotspots.length === 0 && draftHotspots.length === 0) {
-      handleRunAutoDetect();
+      // Format parsed Gemini products as draft highlights
+      const newDrafts: StudioHotspot[] = data.products.map((p: any, idx: number) => ({
+        id: `gemini-${Date.now()}-${idx}`,
+        imageId: currentImageId,
+        name: p.name || `Product #${idx + 1}`,
+        price: p.price || '',
+        types: [],
+        sizes: [],
+        top: p.top,
+        left: p.left,
+        width: p.width,
+        height: p.height,
+        isDraft: true,
+        source: 'gemini',
+      }));
+
+      setDraftHotspots(newDrafts);
+      toast.success(`✨ Gemini 1.5 Flash detected ${newDrafts.length} product(s)!`, {
+        description: 'You can now manually adjust, resize, edit, or save them.',
+      });
+    } catch (err: any) {
+      console.error('Gemini Detection Error:', err);
+      toast.error('Failed to communicate with Gemini API');
+    } finally {
+      setIsGeminiAnalyzing(false);
     }
+  };
+
+  // Handle local image file upload
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const result = event.target?.result as string;
+      setCustomUploadedSrc(result);
+      setCustomUploadedName(file.name);
+      setSavedHotspots([]);
+      setDraftHotspots([]);
+      setSelectedHotspotId(null);
+      toast.success(`Uploaded ${file.name}`);
+
+      // Automatically send to Gemini 1.5 Flash API as requested
+      runGeminiDetection(result);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = ''; // reset input
   };
 
   // Convert client pointer event into percentage coordinates (0 - 100)
@@ -219,7 +240,7 @@ export default function CatalogStudio() {
 
   // Handle Canvas Pointer Down: Start moving, resizing, or drawing new box
   const handleCanvasPointerDown = (e: React.PointerEvent) => {
-    if (isFormOpen || isDetecting) return;
+    if (isFormOpen || isGeminiAnalyzing) return;
     const target = e.target as HTMLElement;
 
     // Check if clicked on a resize handle
@@ -304,7 +325,6 @@ export default function CatalogStudio() {
 
       let { top, left, width, height } = initialBoxRect;
 
-      // Handle horizontal sizing
       if (activeHandle.includes('e')) {
         width = Math.max(2, Math.min(100 - left, initialBoxRect.width + dx));
       } else if (activeHandle.includes('w')) {
@@ -313,7 +333,6 @@ export default function CatalogStudio() {
         left = potentialLeft;
       }
 
-      // Handle vertical sizing
       if (activeHandle.includes('s')) {
         height = Math.max(2, Math.min(100 - top, initialBoxRect.height + dy));
       } else if (activeHandle.includes('n')) {
@@ -344,14 +363,14 @@ export default function CatalogStudio() {
     }
   };
 
-  // Handle Pointer Up: Commit adjustments or trigger modal for newly drawn box
+  // Handle Pointer Up
   const handleCanvasPointerUp = () => {
     if (interactionMode === 'drawing') {
       if (tempDrawingBox && tempDrawingBox.width > 2 && tempDrawingBox.height > 2) {
-        // Open modal to configure and save this newly drawn box
+        const currentImgId = customUploadedSrc ? customUploadedName : selectedImage;
         const newManualDraft: StudioHotspot = {
           id: `draft-manual-${Date.now()}`,
-          imageId: selectedImage,
+          imageId: currentImgId,
           name: '',
           price: '',
           types: [],
@@ -373,7 +392,7 @@ export default function CatalogStudio() {
     setInitialBoxRect(null);
   };
 
-  // Open Edit/Configure Modal for a hotspot
+  // Open Edit/Configure Modal
   const openEditModal = (hotspot: StudioHotspot) => {
     setTargetEditHotspot(hotspot);
     setFormData({
@@ -395,12 +414,12 @@ export default function CatalogStudio() {
     setIsSaving(true);
     const parsedTypes = formData.types.split(',').map((s) => s.trim()).filter(Boolean);
     const parsedSizes = formData.sizes.split(',').map((s) => s.trim()).filter(Boolean);
+    const currentImgId = customUploadedSrc ? customUploadedName : selectedImage;
 
     try {
       if (targetEditHotspot.isDraft) {
-        // Save new hotspot to DB
         const res = await saveHotspot({
-          imageId: selectedImage,
+          imageId: currentImgId,
           name: formData.name.trim(),
           price: formData.price.trim(),
           types: parsedTypes,
@@ -413,7 +432,6 @@ export default function CatalogStudio() {
 
         if (res.success && res.hotspot) {
           toast.success(`Hotspot "${formData.name}" saved!`);
-          // Remove from drafts and add to saved
           setDraftHotspots((prev) => prev.filter((h) => h.id !== targetEditHotspot.id));
           const newSaved: StudioHotspot = {
             ...res.hotspot,
@@ -428,7 +446,6 @@ export default function CatalogStudio() {
           toast.error('Failed to save hotspot to database');
         }
       } else {
-        // Update existing saved hotspot
         const res = await updateHotspot(targetEditHotspot.id, {
           name: formData.name.trim(),
           price: formData.price.trim(),
@@ -470,12 +487,13 @@ export default function CatalogStudio() {
     }
   };
 
-  // Quick Save an individual Draft Hotspot with its default name
+  // Quick Save an individual Draft Hotspot
   const handleQuickSaveDraft = async (draft: StudioHotspot, e?: React.MouseEvent) => {
     e?.stopPropagation();
     setIsSaving(true);
+    const currentImgId = customUploadedSrc ? customUploadedName : selectedImage;
     const res = await saveHotspot({
-      imageId: selectedImage,
+      imageId: currentImgId,
       name: draft.name || 'Product',
       price: draft.price || '',
       types: draft.types || [],
@@ -520,15 +538,16 @@ export default function CatalogStudio() {
     }
   };
 
-  // Batch Save all auto-detected draft highlights
+  // Batch Save all Gemini draft highlights
   const handleSaveAllDrafts = async () => {
     if (draftHotspots.length === 0) return;
     setIsSaving(true);
     toast.info(`Saving ${draftHotspots.length} hotspots to database...`);
+    const currentImgId = customUploadedSrc ? customUploadedName : selectedImage;
 
     const res = await saveMultipleHotspots(
       draftHotspots.map((d) => ({
-        imageId: selectedImage,
+        imageId: currentImgId,
         name: d.name,
         price: d.price || '',
         types: d.types || [],
@@ -543,13 +562,21 @@ export default function CatalogStudio() {
 
     if (res.success) {
       toast.success(`🎉 Successfully saved ${res.count} products!`);
-      loadSavedHotspots(selectedImage);
+      if (!customUploadedSrc) {
+        loadSavedHotspots(selectedImage);
+      } else {
+        setSavedHotspots((prev) => [
+          ...prev,
+          ...(res.hotspots || []).map((h: any) => ({ ...h, isDraft: false })),
+        ]);
+        setDraftHotspots([]);
+      }
     } else {
       toast.error('Failed to batch save');
     }
   };
 
-  // Delete a hotspot (Draft or Saved)
+  // Delete a hotspot
   const handleDeleteHotspot = async (id: string, isDraft: boolean, e?: React.MouseEvent) => {
     e?.stopPropagation();
 
@@ -570,26 +597,40 @@ export default function CatalogStudio() {
     }
   };
 
-  // Clear all drafts
-  const handleClearAllDrafts = () => {
-    setDraftHotspots([]);
-    if (selectedHotspot?.isDraft) setSelectedHotspotId(null);
-    toast.info('Drafts cleared');
+  // Save API Key to localStorage
+  const handleSaveApiKey = () => {
+    const trimmed = tempApiKeyInput.trim();
+    setGeminiApiKey(trimmed);
+    localStorage.setItem('gemini_api_key', trimmed);
+    setIsApiKeyModalOpen(false);
+    toast.success('Gemini API key saved!');
   };
+
+  // Active image display URL
+  const currentImageUrl = customUploadedSrc || (selectedImage ? `/product/${selectedImage}` : '');
 
   return (
     <div className="min-h-screen bg-slate-900 font-sans text-slate-100 flex flex-col select-none">
+      {/* Hidden file input for uploading images */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileUpload}
+      />
+
       {/* ====== TOP HEADER & TOOLBAR ====== */}
       <div className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-md border-b border-slate-800 shadow-xl">
         <div className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
           {/* Logo & Title */}
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-md shadow-indigo-600/30">
-              <Scan size={17} />
+              <Bot size={18} />
             </div>
             <div>
               <h1 className="text-sm font-extrabold tracking-tight text-white flex items-center gap-1.5">
-                Catalog Studio <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded font-mono border border-indigo-500/30">AI Powered</span>
+                Catalog Studio <span className="text-[10px] bg-gradient-to-r from-blue-500/20 to-purple-500/20 text-blue-300 px-1.5 py-0.5 rounded font-mono border border-blue-500/30">Gemini 1.5 Flash</span>
               </h1>
               <p className="text-[10px] text-slate-400 font-medium">
                 {savedHotspots.length} saved • {draftHotspots.length} drafts
@@ -597,43 +638,81 @@ export default function CatalogStudio() {
             </div>
           </div>
 
-          {/* Model Status Pill */}
-          <div className="flex items-center gap-1.5 text-xs bg-slate-900 px-3 py-1.5 rounded-full border border-slate-800">
-            {modelStatus === 'loading' && <RefreshCw size={13} className="text-amber-400 animate-spin" />}
-            {modelStatus === 'ready' && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
-            {modelStatus === 'error' && <span className="w-2 h-2 rounded-full bg-amber-500" />}
-            <span className="text-[11px] font-semibold text-slate-300">
-              {isDetecting ? 'Scanning with AI...' : modelStatusText}
-            </span>
-          </div>
+          {/* Page Selector & Upload Action */}
+          <div className="flex items-center gap-2 flex-1 max-w-md min-w-[200px]">
+            {customUploadedSrc ? (
+              <div className="flex-1 flex items-center justify-between bg-indigo-950/60 border border-indigo-700/60 rounded-xl px-3 py-1.5">
+                <span className="text-xs font-semibold text-indigo-200 truncate">
+                  📁 {customUploadedName}
+                </span>
+                <button
+                  onClick={() => {
+                    setCustomUploadedSrc(null);
+                    setCustomUploadedName('');
+                  }}
+                  className="text-xs text-indigo-400 hover:text-white ml-2"
+                  title="Return to catalog"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ) : (
+              <div className="flex-1">
+                <select
+                  className="w-full p-2 bg-slate-900 border border-slate-700 rounded-xl text-xs font-semibold text-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none truncate"
+                  value={selectedImage}
+                  onChange={(e) => setSelectedImage(e.target.value)}
+                >
+                  {catalogPages.map((page, idx) => (
+                    <option key={page} value={page}>
+                      Page {idx + 1} ({page.replace('Hamza Draft 4-images-', '').replace('.jpg', '')})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
-          {/* Page Selector */}
-          <div className="flex-1 max-w-xs min-w-[180px]">
-            <select
-              className="w-full p-2 bg-slate-900 border border-slate-700 rounded-xl text-xs font-semibold text-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none truncate"
-              value={selectedImage}
-              onChange={(e) => setSelectedImage(e.target.value)}
-            >
-              {catalogPages.map((page, idx) => (
-                <option key={page} value={page}>
-                  Page {idx + 1} ({page.replace('Hamza Draft 4-images-', '').replace('.jpg', '')})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Detection Actions Toolbar */}
-          <div className="flex items-center gap-2">
+            {/* Upload Image Button */}
             <Button
               size="sm"
-              disabled={isDetecting}
-              onClick={handleRunAutoDetect}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/20 h-9 px-3 gap-1.5"
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+              className="border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800 rounded-xl text-xs font-semibold h-9 px-3 gap-1.5 shrink-0"
+              title="Upload custom image to analyze with Gemini"
             >
-              <Sparkles size={14} className={isDetecting ? 'animate-spin' : ''} />
-              {isDetecting ? 'Detecting...' : 'Auto-Detect'}
+              <Upload size={14} />
+              <span className="hidden sm:inline">Upload</span>
+            </Button>
+          </div>
+
+          {/* Detection & Key Actions */}
+          <div className="flex items-center gap-2">
+            {/* Gemini Detection Button */}
+            <Button
+              size="sm"
+              disabled={isGeminiAnalyzing}
+              onClick={() => runGeminiDetection()}
+              className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/20 h-9 px-3 gap-1.5"
+            >
+              <Sparkles size={14} className={isGeminiAnalyzing ? 'animate-spin' : ''} />
+              {isGeminiAnalyzing ? 'Analyzing...' : 'Detect with Gemini'}
             </Button>
 
+            {/* API Key Modal Button */}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setIsApiKeyModalOpen(true)}
+              className={`border-slate-700 bg-slate-900 rounded-xl text-xs h-9 px-2.5 gap-1 ${
+                geminiApiKey ? 'text-emerald-400' : 'text-amber-400 animate-pulse'
+              }`}
+              title="Configure Gemini API Key"
+            >
+              <Key size={14} />
+              <span className="hidden lg:inline">{geminiApiKey ? 'Key Set' : 'Set Key'}</span>
+            </Button>
+
+            {/* Save All Drafts */}
             {draftHotspots.length > 0 && (
               <>
                 <Button
@@ -643,61 +722,27 @@ export default function CatalogStudio() {
                   className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 h-9 px-3 gap-1.5"
                 >
                   <Save size={14} />
-                  Save All ({draftHotspots.length})
+                  Save ({draftHotspots.length})
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={handleClearAllDrafts}
+                  onClick={() => setDraftHotspots([])}
                   className="border-slate-700 bg-slate-900 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-xl text-xs h-9 px-2.5"
-                  title="Clear all auto-detected drafts"
+                  title="Clear drafts"
                 >
                   <Trash2 size={14} />
                 </Button>
               </>
             )}
 
-            {/* Mobile list drawer toggle */}
+            {/* Mobile list toggle */}
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
               className="md:hidden flex items-center gap-1 text-xs font-bold text-slate-300 bg-slate-800 px-3 py-2 rounded-xl"
             >
               List ({allCurrentHotspots.length}) {sidebarOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </button>
-          </div>
-        </div>
-
-        {/* Secondary Sub-toolbar: Settings & Detection Mode */}
-        <div className="px-4 py-1.5 bg-slate-950 border-t border-slate-800/60 flex flex-wrap items-center justify-between text-xs text-slate-400">
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-1.5 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={autoDetectOnSwitch}
-                onChange={(e) => setAutoDetectOnSwitch(e.target.checked)}
-                className="w-3.5 h-3.5 rounded border-slate-700 text-indigo-600 focus:ring-indigo-500 bg-slate-900"
-              />
-              <span className="text-[11px] font-medium text-slate-300">Auto-detect when selecting blank page</span>
-            </label>
-
-            <div className="hidden sm:flex items-center gap-1.5 pl-3 border-l border-slate-800">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Engine:</span>
-              <select
-                value={detectionMode}
-                onChange={(e: any) => setDetectionMode(e.target.value)}
-                className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-0.5 text-[11px] text-slate-300 outline-none font-medium"
-              >
-                <option value="hybrid">Hybrid (COCO-SSD + Layout Contour)</option>
-                <option value="ai">AI Only (COCO-SSD)</option>
-                <option value="contour">Layout Contour Only (Tools/Hardware)</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="text-[11px] text-slate-400 flex items-center gap-3">
-            <span>🖱️ Click to select &amp; resize</span>
-            <span>✋ Drag to move</span>
-            <span>➕ Drag empty area to add</span>
           </div>
         </div>
       </div>
@@ -725,7 +770,7 @@ export default function CatalogStudio() {
                     <span className="text-xs font-bold text-white">{h.name || 'Unnamed Product'}</span>
                     {h.isDraft && (
                       <span className="text-[9px] bg-indigo-500/20 text-indigo-300 px-1.5 rounded font-mono">
-                        Draft
+                        Gemini Draft
                       </span>
                     )}
                   </div>
@@ -759,12 +804,11 @@ export default function CatalogStudio() {
       {/* ====== MAIN WORKSPACE (SIDEBAR + CANVAS) ====== */}
       <div className="flex flex-1 overflow-hidden">
         {/* Desktop Sidebar */}
-        <div className="hidden md:flex w-80 bg-slate-950 border-r border-slate-800 flex-col h-[calc(100vh-88px)] sticky top-[88px] overflow-y-auto">
+        <div className="hidden md:flex w-80 bg-slate-950 border-r border-slate-800 flex-col h-[calc(100vh-65px)] sticky top-[65px] overflow-y-auto">
           <div className="p-4 space-y-4">
-            {/* Header info */}
             <div className="flex items-center justify-between">
               <h2 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <Layers size={13} /> Page Highlights ({allCurrentHotspots.length})
+                <Layers size={13} /> Highlights ({allCurrentHotspots.length})
               </h2>
               {draftHotspots.length > 0 && (
                 <button
@@ -776,13 +820,12 @@ export default function CatalogStudio() {
               )}
             </div>
 
-            {/* List of Hotspots */}
             {allCurrentHotspots.length === 0 ? (
               <div className="text-center py-10 px-4 border border-dashed border-slate-800 rounded-2xl">
                 <Scan size={24} className="text-slate-600 mx-auto mb-2" />
-                <p className="text-xs font-semibold text-slate-400">No highlights on this page</p>
+                <p className="text-xs font-semibold text-slate-400">No highlights detected</p>
                 <p className="text-[11px] text-slate-500 mt-1">
-                  Click &ldquo;Auto-Detect&rdquo; above or drag on the canvas to draw.
+                  Upload an image or click &ldquo;Detect with Gemini&rdquo; to auto-detect products.
                 </p>
               </div>
             ) : (
@@ -806,8 +849,8 @@ export default function CatalogStudio() {
                           <div className="flex items-center gap-2">
                             <p className="text-xs font-bold text-white truncate">{h.name || 'Unnamed Product'}</p>
                             {h.isDraft ? (
-                              <span className="text-[9px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.2 rounded font-mono shrink-0">
-                                Draft
+                              <span className="text-[9px] bg-blue-500/20 text-blue-300 border border-blue-500/30 px-1.5 py-0.2 rounded font-mono shrink-0">
+                                Gemini
                               </span>
                             ) : (
                               <span className="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.2 rounded font-mono shrink-0">
@@ -833,7 +876,7 @@ export default function CatalogStudio() {
                               openEditModal(h);
                             }}
                             className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
-                            title="Configure details"
+                            title="Edit details"
                           >
                             <Edit2 size={13} />
                           </button>
@@ -877,7 +920,7 @@ export default function CatalogStudio() {
           <div className="w-full max-w-3xl flex flex-col items-center">
             {/* Interactive Image Container */}
             <div className="w-full bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden shadow-2xl relative">
-              {selectedImage ? (
+              {currentImageUrl ? (
                 <div
                   ref={canvasContainerRef}
                   className="relative w-full select-none touch-none cursor-crosshair overflow-hidden"
@@ -890,12 +933,31 @@ export default function CatalogStudio() {
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     ref={imageElementRef}
-                    src={`/product/${selectedImage}`}
+                    src={currentImageUrl}
                     alt="Catalog Page Canvas"
-                    onLoad={handleImageLoaded}
                     className="w-full h-auto block pointer-events-none select-none"
                     draggable={false}
                   />
+
+                  {/* ============ LOADING OVERLAY FOR GEMINI ============ */}
+                  {isGeminiAnalyzing && (
+                    <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center z-40 pointer-events-auto">
+                      <div className="relative flex items-center justify-center">
+                        <div className="w-20 h-20 rounded-full border-4 border-indigo-500/20 border-t-indigo-500 animate-spin" />
+                        <Bot size={28} className="absolute text-indigo-400 animate-pulse" />
+                      </div>
+                      <div className="mt-4 text-center">
+                        <h4 className="text-sm font-bold text-white tracking-wide">
+                          Gemini 1.5 Flash Analyzing Image...
+                        </h4>
+                        <p className="text-xs text-slate-400 mt-1 max-w-xs">
+                          Detecting distinct products and computing 2D bounding boxes [ymin, xmin, ymax, xmax]
+                        </p>
+                      </div>
+                      {/* Scanning laser beam animation */}
+                      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-cyan-400 to-transparent animate-pulse" />
+                    </div>
+                  )}
 
                   {/* ============ RENDER ALL HOTSPOTS ============ */}
                   {allCurrentHotspots.map((h) => {
@@ -916,7 +978,7 @@ export default function CatalogStudio() {
                           isSelected
                             ? 'border-2 border-indigo-400 bg-indigo-500/25 ring-2 ring-indigo-400/50 z-20'
                             : isDraft
-                            ? 'border-2 border-dashed border-indigo-400/80 bg-indigo-500/15 hover:bg-indigo-500/25 z-10'
+                            ? 'border-2 border-dashed border-cyan-400/90 bg-cyan-500/15 hover:bg-cyan-500/25 z-10'
                             : 'border-2 border-emerald-500/90 bg-emerald-500/15 hover:bg-emerald-500/25 z-10'
                         }`}
                       >
@@ -927,12 +989,12 @@ export default function CatalogStudio() {
                               isSelected
                                 ? 'bg-indigo-600'
                                 : isDraft
-                                ? 'bg-indigo-500'
+                                ? 'bg-cyan-600'
                                 : 'bg-emerald-600'
                             }`}
                           >
                             {h.name || 'Item'}
-                            {isDraft && <span className="text-[8px] opacity-80">(Draft)</span>}
+                            {isDraft && <span className="text-[8px] opacity-80">(AI)</span>}
                             {h.isDirty && <span className="text-[8px] text-amber-200">●</span>}
                           </span>
                         </div>
@@ -946,7 +1008,7 @@ export default function CatalogStudio() {
                             <button
                               onClick={() => openEditModal(h)}
                               className="px-2 py-0.5 text-[10px] font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg flex items-center gap-1"
-                              title="Configure details"
+                              title="Edit details"
                             >
                               <Edit2 size={11} /> Edit
                             </button>
@@ -981,42 +1043,34 @@ export default function CatalogStudio() {
                         {/* 8 Resize Handles (rendered only when selected) */}
                         {isSelected && (
                           <>
-                            {/* NW Handle */}
                             <div
                               data-handle="nw"
                               className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-indigo-600 rounded-full cursor-nwse-resize z-30 shadow-md"
                             />
-                            {/* N Handle */}
                             <div
                               data-handle="n"
                               className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white border-2 border-indigo-600 rounded-full cursor-ns-resize z-30 shadow-md"
                             />
-                            {/* NE Handle */}
                             <div
                               data-handle="ne"
                               className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-indigo-600 rounded-full cursor-nesw-resize z-30 shadow-md"
                             />
-                            {/* E Handle */}
                             <div
                               data-handle="e"
                               className="absolute top-1/2 -right-1.5 -translate-y-1/2 w-3 h-3 bg-white border-2 border-indigo-600 rounded-full cursor-ew-resize z-30 shadow-md"
                             />
-                            {/* SE Handle */}
                             <div
                               data-handle="se"
                               className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-indigo-600 rounded-full cursor-nwse-resize z-30 shadow-md"
                             />
-                            {/* S Handle */}
                             <div
                               data-handle="s"
                               className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white border-2 border-indigo-600 rounded-full cursor-ns-resize z-30 shadow-md"
                             />
-                            {/* SW Handle */}
                             <div
                               data-handle="sw"
                               className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-indigo-600 rounded-full cursor-nesw-resize z-30 shadow-md"
                             />
-                            {/* W Handle */}
                             <div
                               data-handle="w"
                               className="absolute top-1/2 -left-1.5 -translate-y-1/2 w-3 h-3 bg-white border-2 border-indigo-600 rounded-full cursor-ew-resize z-30 shadow-md"
@@ -1138,6 +1192,51 @@ export default function CatalogStudio() {
                   Cancel
                 </Button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ====== GEMINI API KEY MODAL ====== */}
+      {isApiKeyModalOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-sm rounded-2xl p-6 shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Key size={18} className="text-indigo-400" />
+                <h3 className="text-base font-bold text-white">Gemini API Key</h3>
+              </div>
+              <button
+                onClick={() => setIsApiKeyModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-xs text-slate-400 mb-4">
+              Enter your Google Gemini API key to enable 2D bounding box product detection with Gemini 1.5 Flash. Key is saved locally in your browser.
+            </p>
+            <input
+              type="password"
+              className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 outline-none p-2.5 rounded-xl text-sm text-white mb-4"
+              value={tempApiKeyInput}
+              onChange={(e) => setTempApiKeyInput(e.target.value)}
+              placeholder="AIzaSy..."
+            />
+            <div className="flex gap-2">
+              <Button
+                onClick={handleSaveApiKey}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white h-10 rounded-xl text-xs font-bold"
+              >
+                Save API Key
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setIsApiKeyModalOpen(false)}
+                className="flex-1 border-slate-800 bg-slate-950 text-slate-300 h-10 rounded-xl text-xs"
+              >
+                Cancel
+              </Button>
             </div>
           </div>
         </div>
