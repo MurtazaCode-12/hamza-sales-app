@@ -1,14 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import {
-  saveHotspot,
-  getHotspotsByImage,
-  deleteHotspot,
-  updateHotspot,
-  saveMultipleHotspots,
-  getCatalogImages
-} from '@/app/actions';
+import { getCatalogImages } from '@/app/actions';
 import { toast } from 'sonner';
 import {
   Trash2,
@@ -108,12 +101,19 @@ export default function CatalogStudio() {
   }, [selectedImage, customUploadedSrc]);
 
   const loadSavedHotspots = async (imageId: string) => {
-    const data = await getHotspotsByImage(imageId);
-    const mapped: StudioHotspot[] = (data || []).map((h: any) => ({
-      ...h,
-      isDraft: false,
-    }));
-    setSavedHotspots(mapped);
+    try {
+      const res = await fetch(`/api/hotspots?imageId=${encodeURIComponent(imageId)}`);
+      const data = await res.json();
+      if (data.success) {
+        const mapped: StudioHotspot[] = (data.hotspots || []).map((h: any) => ({
+          ...h,
+          isDraft: false,
+        }));
+        setSavedHotspots(mapped);
+      }
+    } catch (err) {
+      console.error('Failed to load hotspots', err);
+    }
     setDraftHotspots([]);
     setSelectedHotspotId(null);
   };
@@ -418,46 +418,57 @@ export default function CatalogStudio() {
 
     try {
       if (targetEditHotspot.isDraft) {
-        const res = await saveHotspot({
-          imageId: currentImgId,
-          name: formData.name.trim(),
-          price: formData.price.trim(),
-          types: parsedTypes,
-          sizes: parsedSizes,
-          top: targetEditHotspot.top,
-          left: targetEditHotspot.left,
-          width: targetEditHotspot.width,
-          height: targetEditHotspot.height,
+        const res = await fetch('/api/hotspots', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageId: currentImgId,
+            name: formData.name.trim(),
+            price: formData.price.trim(),
+            types: parsedTypes,
+            sizes: parsedSizes,
+            top: targetEditHotspot.top,
+            left: targetEditHotspot.left,
+            width: targetEditHotspot.width,
+            height: targetEditHotspot.height,
+          }),
         });
+        const data = await res.json();
 
-        if (res.success && res.hotspot) {
+        if (data.success && data.hotspot) {
           toast.success(`Hotspot "${formData.name}" saved!`);
           setDraftHotspots((prev) => prev.filter((h) => h.id !== targetEditHotspot.id));
           const newSaved: StudioHotspot = {
-            ...res.hotspot,
-            price: res.hotspot.price ?? null,
+            ...data.hotspot,
+            price: data.hotspot.price ?? null,
             isDraft: false,
           };
           setSavedHotspots((prev) => [...prev, newSaved]);
-          setSelectedHotspotId(res.hotspot.id);
+          setSelectedHotspotId(data.hotspot.id);
           setIsFormOpen(false);
           setTargetEditHotspot(null);
         } else {
-          toast.error('Failed to save hotspot to database');
+          toast.error(data.error || 'Failed to save hotspot to database');
         }
       } else {
-        const res = await updateHotspot(targetEditHotspot.id, {
-          name: formData.name.trim(),
-          price: formData.price.trim(),
-          types: parsedTypes,
-          sizes: parsedSizes,
-          top: targetEditHotspot.top,
-          left: targetEditHotspot.left,
-          width: targetEditHotspot.width,
-          height: targetEditHotspot.height,
+        const res = await fetch('/api/hotspots', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: targetEditHotspot.id,
+            name: formData.name.trim(),
+            price: formData.price.trim(),
+            types: parsedTypes,
+            sizes: parsedSizes,
+            top: targetEditHotspot.top,
+            left: targetEditHotspot.left,
+            width: targetEditHotspot.width,
+            height: targetEditHotspot.height,
+          }),
         });
+        const data = await res.json();
 
-        if (res.success) {
+        if (data.success) {
           toast.success(`Updated "${formData.name}"!`);
           setSavedHotspots((prev) =>
             prev.map((h) =>
@@ -476,12 +487,12 @@ export default function CatalogStudio() {
           setIsFormOpen(false);
           setTargetEditHotspot(null);
         } else {
-          toast.error('Failed to update hotspot');
+          toast.error(data.error || 'Failed to update hotspot');
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      toast.error('An error occurred while saving');
+      toast.error(err?.message || 'An error occurred while saving');
     } finally {
       setIsSaving(false);
     }
@@ -492,48 +503,70 @@ export default function CatalogStudio() {
     e?.stopPropagation();
     setIsSaving(true);
     const currentImgId = customUploadedSrc ? customUploadedName : selectedImage;
-    const res = await saveHotspot({
-      imageId: currentImgId,
-      name: draft.name || 'Product',
-      price: draft.price || '',
-      types: draft.types || [],
-      sizes: draft.sizes || [],
-      top: draft.top,
-      left: draft.left,
-      width: draft.width,
-      height: draft.height,
-    });
-    setIsSaving(false);
 
-    if (res.success && res.hotspot) {
-      toast.success(`Saved "${draft.name}"`);
-      setDraftHotspots((prev) => prev.filter((h) => h.id !== draft.id));
-      const newSaved: StudioHotspot = {
-        ...res.hotspot,
-        price: res.hotspot.price ?? null,
-        isDraft: false,
-      };
-      setSavedHotspots((prev) => [...prev, newSaved]);
-    } else {
+    try {
+      const res = await fetch('/api/hotspots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageId: currentImgId,
+          name: draft.name || 'Product',
+          price: draft.price || '',
+          types: draft.types || [],
+          sizes: draft.sizes || [],
+          top: draft.top,
+          left: draft.left,
+          width: draft.width,
+          height: draft.height,
+        }),
+      });
+      const data = await res.json();
+
+      if (data.success && data.hotspot) {
+        toast.success(`Saved "${draft.name}"`);
+        setDraftHotspots((prev) => prev.filter((h) => h.id !== draft.id));
+        const newSaved: StudioHotspot = {
+          ...data.hotspot,
+          price: data.hotspot.price ?? null,
+          isDraft: false,
+        };
+        setSavedHotspots((prev) => [...prev, newSaved]);
+      } else {
+        toast.error(data.error || 'Failed to save hotspot');
+      }
+    } catch (err: any) {
       toast.error('Failed to save hotspot');
+    } finally {
+      setIsSaving(false);
     }
   };
 
   // Save updated coordinates of an adjusted saved hotspot
   const handleSaveAdjustedPosition = async (hotspot: StudioHotspot, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const res = await updateHotspot(hotspot.id, {
-      top: hotspot.top,
-      left: hotspot.left,
-      width: hotspot.width,
-      height: hotspot.height,
-    });
-    if (res.success) {
-      toast.success('Updated hotspot position');
-      setSavedHotspots((prev) =>
-        prev.map((h) => (h.id === hotspot.id ? { ...h, isDirty: false } : h))
-      );
-    } else {
+    try {
+      const res = await fetch('/api/hotspots', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: hotspot.id,
+          top: hotspot.top,
+          left: hotspot.left,
+          width: hotspot.width,
+          height: hotspot.height,
+        }),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        toast.success('Updated hotspot position');
+        setSavedHotspots((prev) =>
+          prev.map((h) => (h.id === hotspot.id ? { ...h, isDirty: false } : h))
+        );
+      } else {
+        toast.error(data.error || 'Failed to save position');
+      }
+    } catch (err) {
       toast.error('Failed to save position');
     }
   };
@@ -545,34 +578,44 @@ export default function CatalogStudio() {
     toast.info(`Saving ${draftHotspots.length} hotspots to database...`);
     const currentImgId = customUploadedSrc ? customUploadedName : selectedImage;
 
-    const res = await saveMultipleHotspots(
-      draftHotspots.map((d) => ({
-        imageId: currentImgId,
-        name: d.name,
-        price: d.price || '',
-        types: d.types || [],
-        sizes: d.sizes || [],
-        top: d.top,
-        left: d.left,
-        width: d.width,
-        height: d.height,
-      }))
-    );
-    setIsSaving(false);
+    try {
+      const res = await fetch('/api/hotspots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hotspots: draftHotspots.map((d) => ({
+            imageId: currentImgId,
+            name: d.name,
+            price: d.price || '',
+            types: d.types || [],
+            sizes: d.sizes || [],
+            top: d.top,
+            left: d.left,
+            width: d.width,
+            height: d.height,
+          })),
+        }),
+      });
+      const data = await res.json();
 
-    if (res.success) {
-      toast.success(`🎉 Successfully saved ${res.count} products!`);
-      if (!customUploadedSrc) {
-        loadSavedHotspots(selectedImage);
+      if (data.success) {
+        toast.success(`🎉 Successfully saved ${data.count} products!`);
+        if (!customUploadedSrc) {
+          loadSavedHotspots(selectedImage);
+        } else {
+          setSavedHotspots((prev) => [
+            ...prev,
+            ...(data.hotspots || []).map((h: any) => ({ ...h, isDraft: false })),
+          ]);
+          setDraftHotspots([]);
+        }
       } else {
-        setSavedHotspots((prev) => [
-          ...prev,
-          ...(res.hotspots || []).map((h: any) => ({ ...h, isDraft: false })),
-        ]);
-        setDraftHotspots([]);
+        toast.error(data.error || 'Failed to batch save');
       }
-    } else {
+    } catch (err) {
       toast.error('Failed to batch save');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -587,12 +630,20 @@ export default function CatalogStudio() {
       return;
     }
 
-    const res = await deleteHotspot(id);
-    if (res.success) {
-      setSavedHotspots((prev) => prev.filter((h) => h.id !== id));
-      if (selectedHotspotId === id) setSelectedHotspotId(null);
-      toast.success('Hotspot deleted from database');
-    } else {
+    try {
+      const res = await fetch(`/api/hotspots?id=${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setSavedHotspots((prev) => prev.filter((h) => h.id !== id));
+        if (selectedHotspotId === id) setSelectedHotspotId(null);
+        toast.success('Hotspot deleted from database');
+      } else {
+        toast.error(data.error || 'Failed to delete');
+      }
+    } catch (err) {
       toast.error('Failed to delete');
     }
   };
