@@ -95,12 +95,16 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
 
   // Helper to format catalog name
   const formatPageName = (filename: string) => {
-    // Hamza-Trading-CoPune-New_page-0002.jpg -> Page 2
-    const match = filename.match(/page-(\d+)/i);
+    // Hamza Draft 4-images-0.jpg -> Page 1
+    const match = filename.match(/(?:page|images)-(\d+)/i);
     if (match && match[1]) {
-      return `Page ${parseInt(match[1], 10)}`;
+      const num = parseInt(match[1], 10);
+      if (filename.includes("images-")) {
+        return `Page ${num + 1}`;
+      }
+      return `Page ${num}`;
     }
-    return filename.replace("Hamza-Trading-CoPune-New_", "").replace(".jpg", "");
+    return filename.replace(".jpg", "");
   };
 
   const pageHotspots = initialHotspots.filter((h) => h.imageId === displayedPage);

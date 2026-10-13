@@ -122,6 +122,59 @@ export async function deleteHotspot(id: string) {
   }
 }
 
+// 8b. Update Hotspot
+export async function updateHotspot(id: string, data: any) {
+  try {
+    const hotspot = await prisma.catalogHotspot.update({
+      where: { id },
+      data: {
+        name: data.name !== undefined ? data.name : undefined,
+        types: data.types !== undefined ? data.types : undefined,
+        sizes: data.sizes !== undefined ? data.sizes : undefined,
+        top: data.top !== undefined ? data.top : undefined,
+        left: data.left !== undefined ? data.left : undefined,
+        width: data.width !== undefined ? data.width : undefined,
+        height: data.height !== undefined ? data.height : undefined,
+        price: data.price !== undefined ? data.price : undefined,
+      }
+    });
+    revalidatePath('/');
+    return { success: true, hotspot };
+  } catch (error) {
+    console.error("Failed to update hotspot", error);
+    return { success: false };
+  }
+}
+
+// 8c. Save Multiple Hotspots
+export async function saveMultipleHotspots(hotspotsList: any[]) {
+  try {
+    if (!hotspotsList || hotspotsList.length === 0) return { success: true, count: 0, hotspots: [] };
+    const created: any[] = [];
+    for (const data of hotspotsList) {
+      const item = await prisma.catalogHotspot.create({
+        data: {
+          imageId: data.imageId,
+          name: data.name || "Product",
+          types: data.types || [],
+          sizes: data.sizes || [],
+          top: data.top,
+          left: data.left,
+          width: data.width,
+          height: data.height,
+          price: data.price || ""
+        }
+      });
+      created.push(item);
+    }
+    revalidatePath('/');
+    return { success: true, hotspots: created, count: created.length };
+  } catch (error) {
+    console.error("Failed to save multiple hotspots", error);
+    return { success: false, error: "Failed to batch save hotspots" };
+  }
+}
+
 // 9. Get All Hotspots
 export async function getAllHotspots() {
   try {
@@ -132,60 +185,7 @@ export async function getAllHotspots() {
   }
 }
 
-// 10. Catalog image list (static for Vercel serverless compatibility)
 export async function getCatalogImages() {
-  // Hardcoded list of all images in public/product.
-  // Add new filenames here whenever you add more catalog pages.
-  return [
-    "Hamza-Trading-CoPune-New_page-0002.jpg",
-    "Hamza-Trading-CoPune-New_page-0003.jpg",
-    "Hamza-Trading-CoPune-New_page-0004.jpg",
-    "Hamza-Trading-CoPune-New_page-0005.jpg",
-    "Hamza-Trading-CoPune-New_page-0006.jpg",
-    "Hamza-Trading-CoPune-New_page-0007.jpg",
-    "Hamza-Trading-CoPune-New_page-0008.jpg",
-    "Hamza-Trading-CoPune-New_page-0009.jpg",
-    "Hamza-Trading-CoPune-New_page-0010.jpg",
-    "Hamza-Trading-CoPune-New_page-0011.jpg",
-    "Hamza-Trading-CoPune-New_page-0012.jpg",
-    "Hamza-Trading-CoPune-New_page-0013.jpg",
-    "Hamza-Trading-CoPune-New_page-0014.jpg",
-    "Hamza-Trading-CoPune-New_page-0015.jpg",
-    "Hamza-Trading-CoPune-New_page-0016.jpg",
-    "Hamza-Trading-CoPune-New_page-0017.jpg",
-    "Hamza-Trading-CoPune-New_page-0018.jpg",
-    "Hamza-Trading-CoPune-New_page-0019.jpg",
-    "Hamza-Trading-CoPune-New_page-0020.jpg",
-    "Hamza-Trading-CoPune-New_page-0021.jpg",
-    "Hamza-Trading-CoPune-New_page-0022.jpg",
-    "Hamza-Trading-CoPune-New_page-0023.jpg",
-    "Hamza-Trading-CoPune-New_page-0024.jpg",
-    "Hamza-Trading-CoPune-New_page-0025.jpg",
-    "Hamza-Trading-CoPune-New_page-0026.jpg",
-    "Hamza-Trading-CoPune-New_page-0027.jpg",
-    "Hamza-Trading-CoPune-New_page-0028.jpg",
-    "Hamza-Trading-CoPune-New_page-0029.jpg",
-    "Hamza-Trading-CoPune-New_page-0030.jpg",
-    "Hamza-Trading-CoPune-New_page-0031.jpg",
-    "Hamza-Trading-CoPune-New_page-0032.jpg",
-    "Hamza-Trading-CoPune-New_page-0033.jpg",
-    "Hamza-Trading-CoPune-New_page-0034.jpg",
-    "Hamza-Trading-CoPune-New_page-0035.jpg",
-    "Hamza-Trading-CoPune-New_page-0036.jpg",
-    "Hamza-Trading-CoPune-New_page-0037.jpg",
-    "Hamza-Trading-CoPune-New_page-0038.jpg",
-    "Hamza-Trading-CoPune-New_page-0039.jpg",
-    "Hamza-Trading-CoPune-New_page-0040.jpg",
-    "Hamza-Trading-CoPune-New_page-0041.jpg",
-    "Hamza-Trading-CoPune-New_page-0042.jpg",
-    "Hamza-Trading-CoPune-New_page-0043.jpg",
-    "Hamza-Trading-CoPune-New_page-0044.jpg",
-    "Hamza-Trading-CoPune-New_page-0045.jpg",
-    "Hamza-Trading-CoPune-New_page-0046.jpg",
-    "Hamza-Trading-CoPune-New_page-0047.jpg",
-    "Hamza-Trading-CoPune-New_page-0048.jpg",
-    "Hamza-Trading-CoPune-New_page-0049.jpg",
-    "Hamza-Trading-CoPune-New_page-0050.jpg",
-    "Hamza-Trading-CoPune-New_page-0051.jpg",
-  ];
+  // Generate the array of the new 56 brochure pages
+  return Array.from({ length: 56 }, (_, i) => `Hamza Draft 4-images-${i}.jpg`);
 }
