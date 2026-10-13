@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { useStore } from "@/context/StoreContext";
-import { ShoppingCart, LayoutDashboard, Layers, BookOpen, User, Sparkles, ExternalLink, ChevronLeft, ChevronRight, SlidersHorizontal, Search, X } from "lucide-react";
+import { ShoppingCart, LayoutDashboard, Layers, BookOpen, User, Sparkles, ExternalLink, ChevronLeft, ChevronRight, SlidersHorizontal, Search, X, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import ShoppableCatalogImage from "@/components/ShoppableCatalogImage";
+import { useProfile } from "@/context/ProfileContext";
 
 interface CatalogClientViewProps {
   initialHotspots: any[];
@@ -13,6 +14,7 @@ interface CatalogClientViewProps {
 
 export default function CatalogClientView({ initialHotspots, catalogPages }: CatalogClientViewProps) {
   const { cart } = useStore();
+  const { profile: activeProfile, isAdmin } = useProfile();
   const cartCount = cart.reduce((acc, item) => acc + item.qty, 0);
 
   // States
@@ -131,6 +133,29 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
 
           {/* Actions */}
           <div className="flex items-center gap-2">
+            {/* Identity Switcher Button */}
+            <Link href="/select-profile">
+              <button 
+                className="flex items-center gap-1.5 px-2.5 py-2 rounded-xl border transition-all text-xs active:scale-95 shadow-sm"
+                style={{ background: "#FFFFFF", borderColor: "#E2E8F0", color: "#334155" }}
+                title="Active Profile (Click to switch)"
+              >
+                <span className="text-sm">{activeProfile?.avatar || (isAdmin ? "👑" : "👤")}</span>
+                <span className="hidden sm:inline font-bold max-w-[90px] truncate">{activeProfile?.name || "Profile"}</span>
+              </button>
+            </Link>
+
+            {isAdmin && (
+              <Link href="/admin">
+                <button 
+                  className="p-2.5 rounded-xl transition-all active:scale-95 border bg-rose-50 border-rose-200 text-rose-700 shadow-sm"
+                  title="Admin Dashboard"
+                >
+                  <ShieldCheck size={17} />
+                </button>
+              </Link>
+            )}
+
             {cartCount > 0 && (
               <Link href="/cart">
                 <button 
@@ -149,7 +174,7 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
               </Link>
             )}
             <Link href="/dashboard">
-              <button className="p-2.5 rounded-xl transition-all active:scale-95 border" style={{ background: "#FFFFFF", borderColor: "#E2E8F0", color: "#475569" }}>
+              <button className="p-2.5 rounded-xl transition-all active:scale-95 border" style={{ background: "#FFFFFF", borderColor: "#E2E8F0", color: "#475569" }} title="My Orders">
                 <LayoutDashboard size={17} />
               </button>
             </Link>
@@ -410,7 +435,12 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
             { icon: <Layers size={20} />, label: "Catalog", href: "/", active: true },
             { icon: <LayoutDashboard size={20} />, label: "Orders", href: "/dashboard", active: false },
             { icon: <BookOpen size={20} />, label: "Studio", href: "/studio", active: false },
-            { icon: <User size={20} />, label: "Profile", href: "#", active: false },
+            { 
+              icon: <User size={20} />, 
+              label: activeProfile ? (activeProfile.name.split(" ")[0]) : "Profile", 
+              href: "/select-profile", 
+              active: false 
+            },
           ].map(({ icon, label, href, active }) => (
             <Link key={label} href={href} className="flex flex-col items-center gap-0.5 w-full transition-all">
               <span style={{ color: active ? "#4F46E5" : "#94A3B8" }}>{icon}</span>

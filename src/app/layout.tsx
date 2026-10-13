@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next"; // Import Viewport
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { StoreProvider } from "@/context/StoreContext";
+import { ProfileProvider } from "@/context/ProfileContext";
 import { ThemeProvider } from "@/components/ui/theme-provider";
 import { Toaster } from "sonner";
 
@@ -45,7 +46,9 @@ export default function RootLayout({
       <body className={inter.className}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <StoreProvider>
-            {children}
+            <ProfileProvider>
+              {children}
+            </ProfileProvider>
           </StoreProvider>
           <Toaster position="top-center" richColors />
         </ThemeProvider>

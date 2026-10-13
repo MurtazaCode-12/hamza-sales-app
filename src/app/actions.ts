@@ -4,14 +4,16 @@ import { revalidatePath } from "next/cache";
 import prisma from "@/lib/prisma";
 
 // 1. Save Order to Supabase
-export async function createOrder(formData: any, cartItems: any[]) {
+export async function createOrder(formData: any, cartItems: any[], profileId?: string) {
   try {
+    const targetProfileId = profileId || formData.profileId || null;
     const order = await prisma.order.create({
       data: {
         shopName: formData.shopName,
         ownerName: formData.ownerName || "",
         phone: formData.phone,
         address: formData.address,
+        profileId: targetProfileId,
         totalItems: cartItems.reduce((acc: any, item: any) => acc + item.qty, 0),
         items: {
           create: cartItems.map((item: any) => ({
@@ -42,7 +44,7 @@ export async function approveOrder(orderId: string) {
 export async function getOrder(orderId: string) {
   return await prisma.order.findUnique({
     where: { id: orderId },
-    include: { items: true },
+    include: { items: true, profile: true },
   });
 }
 
@@ -55,12 +57,15 @@ export async function markAsDispatched(orderId: string) {
   revalidatePath(`/order/${orderId}`);
 }
 
-// 5. Get All Orders (Recent First)
-export async function getRecentOrders() {
+// 5. Get All Orders (Recent First, optionally filtered by profileId)
+export async function getRecentOrders(profileId?: string) {
   try {
+    const where = profileId ? { profileId } : {};
     const orders = await prisma.order.findMany({
+      where,
+      include: { profile: true },
       orderBy: { createdAt: 'desc' },
-      take: 20, // Last 20 orders
+      take: 50, // Up to 50 recent orders
     });
     return orders;
   } catch (error) {

@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useStore } from "@/context/StoreContext";
-import { Trash2, ArrowLeft, CheckCircle, X, Plus, Minus, Store, ClipboardList, ShoppingCart, User, MapPin, Phone, Zap, Send } from "lucide-react";
+import { useProfile } from "@/context/ProfileContext";
+import { Trash2, ArrowLeft, CheckCircle, X, Plus, Minus, Store, ClipboardList, ShoppingCart, User, MapPin, Phone, Zap, Send, Briefcase } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -11,6 +12,7 @@ import { toast } from "sonner";
 
 export default function CartPage() {
   const { cart, removeFromCart, updateCartQty, clearCart, selectedClient } = useStore();
+  const { profile: activeProfile } = useProfile();
   const router = useRouter();
 
   const [details, setDetails] = useState({
@@ -33,7 +35,7 @@ export default function CartPage() {
     setIsSubmitting(true);
     setSubmitMode(mode);
     try {
-      const result = await createOrder(details, cart);
+      const result = await createOrder(details, cart, activeProfile?.id);
       if (!result.success || !result.orderId) {
         toast.error("Database Error", { description: "Could not save the order." });
         return;
@@ -131,7 +133,15 @@ export default function CartPage() {
         {/* === CLIENT DETAILS === */}
         {cart.length > 0 && (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-3">
-            <h2 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Client Details</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Client Details</h2>
+              {activeProfile && (
+                <Link href="/select-profile" className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+                  <span>{activeProfile.name}</span>
+                  <span className="text-slate-400 font-normal">({activeProfile.role})</span>
+                </Link>
+              )}
+            </div>
             {[
               { icon: Store, placeholder: "Shop Name", field: "shopName", type: "text" },
               { icon: Phone, placeholder: "Phone Number", field: "phone", type: "tel" },

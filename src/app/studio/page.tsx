@@ -18,8 +18,10 @@ import {
   Key,
   Bot,
   Image as ImageIcon,
-  ArrowRight
+  ArrowRight,
+  ArrowLeft
 } from 'lucide-react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 
 export interface StudioHotspot {
@@ -676,6 +678,13 @@ export default function CatalogStudio() {
         <div className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
           {/* Logo & Title */}
           <div className="flex items-center gap-2.5">
+            <Link 
+              href="/admin" 
+              className="p-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white rounded-xl transition-all"
+              title="Return to Admin Dashboard"
+            >
+              <ArrowLeft size={16} />
+            </Link>
             <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-md shadow-indigo-600/30">
               <Bot size={18} />
             </div>

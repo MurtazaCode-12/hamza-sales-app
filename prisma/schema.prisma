@@ -10,18 +10,30 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+model Profile {
+  id        String   @id @default(cuid())
+  name      String
+  role      String   @default("user") // "admin" | "user"
+  avatar    String?
+  createdAt DateTime @default(now())
+  orders    Order[]
+}
+
 model Order {
-  id          String      @id @default(cuid())
-  createdAt   DateTime    @default(now())
-  shopName    String
-  ownerName   String?
-  phone       String
-  address     String?
-  status      String      @default("PENDING") // PENDING, APPROVED
-  totalItems  Int
-  items       OrderItem[]
+  id         String      @id @default(cuid())
+  createdAt  DateTime    @default(now())
+  shopName   String
+  ownerName  String?
+  phone      String
+  address    String?
+  status     String      @default("PENDING") // PENDING, APPROVED
+  totalItems Int
+  items      OrderItem[]
+  profileId  String?
+  profile    Profile?    @relation(fields: [profileId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
+  @@index([profileId])
 }
 
 model OrderItem {
