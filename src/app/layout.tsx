@@ -20,6 +20,11 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: "Hamza Trading Co.",
   description: "Field Sales App",
+  icons: {
+    icon: "/icon.png",
+    shortcut: "/favicon.ico",
+    apple: "/icon.png",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
