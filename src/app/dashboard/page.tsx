@@ -15,7 +15,8 @@ import {
   Users, 
   ShieldCheck, 
   Briefcase, 
-  ExternalLink 
+  ExternalLink,
+  Package 
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -136,6 +137,13 @@ export default function Dashboard() {
                   </button>
                 </Link>
               )}
+
+              <Link href="/products">
+                <button className="p-2.5 bg-white/10 hover:bg-white/20 text-slate-200 rounded-xl transition-all active:scale-95 flex items-center gap-1.5 text-xs font-semibold" title="Products & Rates">
+                  <Package size={15} />
+                  <span className="hidden sm:inline">Products</span>
+                </button>
+              </Link>
 
               <Link href="/">
                 <button className="p-2.5 bg-white/10 hover:bg-white/20 rounded-xl transition-all active:scale-95" title="Catalog">

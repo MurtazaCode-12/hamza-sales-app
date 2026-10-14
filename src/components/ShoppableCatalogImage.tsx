@@ -4,7 +4,7 @@ import Image from 'next/image';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ShoppingCart, ChevronDown, Plus, Minus } from 'lucide-react';
-import { useStore } from '@/context/StoreContext';
+import { useStore, ALLOWED_UNITS, UnitType } from '@/context/StoreContext';
 import { toast } from 'sonner';
 
 export type ProductHotspot = {
@@ -38,7 +38,9 @@ export default function ShoppableCatalogImage({
   const [selectedType, setSelectedType] = useState<string>('');
   const [selectedSize, setSelectedSize] = useState<string>('');
   const [quantity, setQuantity] = useState<number>(1);
-  const { addToCart } = useStore();
+  const [selectedUnit, setSelectedUnit] = useState<UnitType>("Pcs");
+  const [editableRate, setEditableRate] = useState<string>("");
+  const { addToCart, showRates } = useStore();
 
   const handleOpen = (product: ProductHotspot) => {
     setSelectedProduct(product);
@@ -47,30 +49,45 @@ export default function ShoppableCatalogImage({
     setSelectedType(validTypes[0] || '');
     setSelectedSize(validSizes[0] || '');
     setQuantity(1);
+    setSelectedUnit("Pcs");
+
+    // Extract numerical rate from price string if present (e.g. ₹150 or 150/Pcs)
+    if (product.price) {
+      const match = product.price.match(/(\d+(\.\d+)?)/);
+      setEditableRate(match ? match[0] : "");
+    } else {
+      setEditableRate("");
+    }
   };
 
+  // NOTE: Requirement 4: When selecting from search, do NOT automatically open the product modal
+  // Instead, clear highlight after 3 seconds of pulsing
   React.useEffect(() => {
     if (highlightProductId) {
-      const match = hotspots.find(h => h.id === highlightProductId);
-      if (match) {
-        handleOpen(match);
+      const timer = setTimeout(() => {
         onHighlightClear?.();
-      }
+      }, 3000);
+      return () => clearTimeout(timer);
     }
-  }, [highlightProductId, hotspots, onHighlightClear]);
+  }, [highlightProductId, onHighlightClear]);
 
   const handleAddToCart = () => {
     if (selectedProduct) {
       const variantParts = [selectedType, selectedSize].filter(Boolean);
       const variantDetail = variantParts.length > 0 ? variantParts.join(' | ') : 'Standard';
+      const numRate = Number(editableRate) || 0;
+
       addToCart({
         productId: selectedProduct.id,
         productName: selectedProduct.name,
         variantId: `${selectedProduct.id}-${selectedType || 'std'}-${selectedSize || 'std'}`,
         variantDetail: variantDetail,
-        qty: quantity
+        qty: quantity,
+        unit: selectedUnit,
+        rate: numRate,
+        totalPrice: numRate * quantity,
       });
-      toast.success(`${selectedProduct.name} (x${quantity}) added to cart`);
+      toast.success(`${selectedProduct.name} (${quantity} ${selectedUnit}) added to cart`);
       setSelectedProduct(null);
     }
   };
@@ -92,27 +109,34 @@ export default function ShoppableCatalogImage({
       />
 
       {/* Transparent Clickable Overlays */}
-      {hotspots.map((product) => (
-        <button
-          key={product.id}
-          onClick={() => handleOpen(product)}
-          className="absolute z-10 cursor-pointer transition-all duration-300 hover:bg-black/10 active:bg-black/20 focus:ring-2 focus:ring-[#4A2B1D]/50 rounded-lg group"
-          style={{
-            top: `${product.top}%`,
-            left: `${product.left}%`,
-            width: `${product.width}%`,
-            height: `${product.height}%`
-          }}
-          aria-label={`Select ${product.name}`}
-        >
-          {/* Subtle hover icon */}
-          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-            <span className="w-10 h-10 bg-white/95 text-[#4A2B1D] rounded-full flex items-center justify-center shadow-[0_4px_12px_rgba(0,0,0,0.15)] scale-75 group-hover:scale-100 transition-transform duration-300">
-               <ShoppingCart size={18} />
-            </span>
-          </div>
-        </button>
-      ))}
+      {hotspots.map((product) => {
+        const isHighlighted = highlightProductId === product.id;
+        return (
+          <button
+            key={product.id}
+            onClick={() => handleOpen(product)}
+            className={`absolute z-10 cursor-pointer transition-all duration-300 rounded-lg group ${
+              isHighlighted 
+                ? 'ring-4 ring-indigo-500 bg-indigo-500/20 animate-pulse' 
+                : 'hover:bg-black/10 active:bg-black/20 focus:ring-2 focus:ring-[#4A2B1D]/50'
+            }`}
+            style={{
+              top: `${product.top}%`,
+              left: `${product.left}%`,
+              width: `${product.width}%`,
+              height: `${product.height}%`
+            }}
+            aria-label={`Select ${product.name}`}
+          >
+            {/* Subtle hover icon */}
+            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+              <span className="w-10 h-10 bg-white/95 text-[#4A2B1D] rounded-full flex items-center justify-center shadow-[0_4px_12px_rgba(0,0,0,0.15)] scale-75 group-hover:scale-100 transition-transform duration-300">
+                 <ShoppingCart size={18} />
+              </span>
+            </div>
+          </button>
+        );
+      })}
 
       {/* Product Selection Modal */}
       <Dialog open={!!selectedProduct} onOpenChange={(open: boolean) => !open && setSelectedProduct(null)}>
@@ -129,7 +153,7 @@ export default function ShoppableCatalogImage({
                       {hasVariants ? 'Select options to configure this product.' : 'Ready to add to your order.'}
                     </DialogDescription>
                   </div>
-                  {selectedProduct.price && (
+                  {showRates && selectedProduct.price && (
                     <span className="shrink-0 text-base sm:text-lg font-bold font-serif text-[#4A2B1D] bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200/50">
                       {selectedProduct.price.startsWith('₹') ? selectedProduct.price : `₹${selectedProduct.price}`}
                     </span>
@@ -201,11 +225,47 @@ export default function ShoppableCatalogImage({
                   </div>
                 )}
 
+                {/* Rate & Unit Controls */}
+                <div className="grid grid-cols-2 gap-3 pt-1 border-t border-slate-100">
+                  {/* Unit Selector */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      Packaging Unit
+                    </label>
+                    <select
+                      value={selectedUnit}
+                      onChange={(e) => setSelectedUnit(e.target.value as UnitType)}
+                      className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-slate-50 text-xs font-bold text-slate-800 focus:border-indigo-400 focus:bg-white outline-none transition-all"
+                    >
+                      {ALLOWED_UNITS.map((u) => (
+                        <option key={u} value={u}>{u}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Rate Control (when showRates is active) */}
+                  {showRates && (
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                        Rate (₹ / {selectedUnit})
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        placeholder="0.00"
+                        value={editableRate}
+                        onChange={(e) => setEditableRate(e.target.value)}
+                        className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-slate-50 text-xs font-bold text-slate-800 focus:border-indigo-400 focus:bg-white outline-none transition-all"
+                      />
+                    </div>
+                  )}
+                </div>
+
                 {/* Quantity Selector */}
                 <div className="flex items-center justify-between pt-1 border-t border-slate-100">
                   <div>
                     <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Quantity</span>
-                    <span className="text-[11px] text-slate-400">Order units</span>
+                    <span className="text-[11px] text-slate-400">Number of {selectedUnit}s</span>
                   </div>
                   <div className="flex items-center border border-slate-200 bg-slate-50 rounded-xl p-1">
                     <button
@@ -228,6 +288,16 @@ export default function ShoppableCatalogImage({
                     </button>
                   </div>
                 </div>
+
+                {/* Total estimation if rate is present */}
+                {showRates && Number(editableRate) > 0 && (
+                  <div className="flex items-center justify-between bg-amber-50/50 border border-amber-200/50 rounded-xl px-3 py-2 text-xs">
+                    <span className="font-semibold text-amber-900">Estimated Total:</span>
+                    <span className="font-bold text-amber-950 font-serif text-sm">
+                      ₹{(Number(editableRate) * quantity).toFixed(2)}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="flex pt-3 mt-1 border-t border-slate-100">
@@ -236,7 +306,7 @@ export default function ShoppableCatalogImage({
                   className="w-full bg-[#4A2B1D] hover:bg-[#321C10] text-white h-12 rounded-xl text-sm font-bold shadow-lg shadow-[#4A2B1D]/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
                 >
                   <ShoppingCart size={16} />
-                  <span>Add {quantity > 1 ? `${quantity} Units` : 'to Cart'}</span>
+                  <span>Add {quantity} {selectedUnit} to Cart</span>
                 </Button>
               </div>
             </>

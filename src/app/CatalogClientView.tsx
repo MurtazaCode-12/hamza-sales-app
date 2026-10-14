@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useStore } from "@/context/StoreContext";
-import { ShoppingCart, LayoutDashboard, Layers, BookOpen, User, Sparkles, ExternalLink, ChevronLeft, ChevronRight, SlidersHorizontal, Search, X, ShieldCheck } from "lucide-react";
+import { ShoppingCart, LayoutDashboard, Layers, BookOpen, User, Sparkles, ExternalLink, ChevronLeft, ChevronRight, SlidersHorizontal, Search, X, ShieldCheck, Eye, EyeOff, Package } from "lucide-react";
 import Link from "next/link";
 import ShoppableCatalogImage from "@/components/ShoppableCatalogImage";
 import { useProfile } from "@/context/ProfileContext";
@@ -13,7 +13,7 @@ interface CatalogClientViewProps {
 }
 
 export default function CatalogClientView({ initialHotspots, catalogPages }: CatalogClientViewProps) {
-  const { cart } = useStore();
+  const { cart, showRates, toggleShowRates } = useStore();
   const { profile: activeProfile, isAdmin } = useProfile();
   const cartCount = cart.reduce((acc, item) => acc + item.qty, 0);
 
@@ -173,6 +173,15 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
                 </button>
               </Link>
             )}
+            <Link href="/products">
+              <button 
+                className="p-2.5 rounded-xl transition-all active:scale-95 border" 
+                style={{ background: "#FFFFFF", borderColor: "#E2E8F0", color: "#475569" }} 
+                title="Product Catalog & Rates"
+              >
+                <Package size={17} />
+              </button>
+            </Link>
             <Link href="/dashboard">
               <button className="p-2.5 rounded-xl transition-all active:scale-95 border" style={{ background: "#FFFFFF", borderColor: "#E2E8F0", color: "#475569" }} title="My Orders">
                 <LayoutDashboard size={17} />
@@ -285,12 +294,28 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
             </button>
           </div>
 
-          <div className="flex items-center gap-3">
-            <Link href="/studio">
-              <span className="text-[11px] font-bold flex items-center gap-1 transition-all text-indigo-600 hover:text-indigo-800">
-                Studio <ExternalLink size={11} />
-              </span>
-            </Link>
+          <div className="flex items-center gap-2">
+            {/* Global Show/Hide Rates Toggle */}
+            <button
+              onClick={toggleShowRates}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all active:scale-95 shadow-sm ${
+                showRates 
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-700" 
+                  : "bg-slate-100 border-slate-200 text-slate-500"
+              }`}
+              title="Global Show/Hide Rates for customers"
+            >
+              {showRates ? <Eye size={13} /> : <EyeOff size={13} />}
+              <span>{showRates ? "Rates: Visible" : "Rates: Hidden"}</span>
+            </button>
+
+            {isAdmin && (
+              <Link href="/studio">
+                <span className="text-[11px] font-bold flex items-center gap-1 transition-all text-indigo-600 hover:text-indigo-800">
+                  Studio <ExternalLink size={11} />
+                </span>
+              </Link>
+            )}
           </div>
         </div>
 

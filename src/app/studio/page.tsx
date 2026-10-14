@@ -19,10 +19,13 @@ import {
   Bot,
   Image as ImageIcon,
   ArrowRight,
-  ArrowLeft
+  ArrowLeft,
+  ShieldAlert,
+  FileText
 } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { useProfile } from '@/context/ProfileContext';
 
 export interface StudioHotspot {
   id: string;
@@ -44,6 +47,8 @@ export interface StudioHotspot {
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 
 export default function CatalogStudio() {
+  const { profile: activeProfile, isAdmin, isLoading: isProfileLoading } = useProfile();
+
   const [catalogPages, setCatalogPages] = useState<string[]>([]);
   const [selectedImage, setSelectedImage] = useState<string>('');
   const [customUploadedSrc, setCustomUploadedSrc] = useState<string | null>(null);
@@ -58,6 +63,10 @@ export default function CatalogStudio() {
   const [geminiApiKey, setGeminiApiKey] = useState<string>('');
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [tempApiKeyInput, setTempApiKeyInput] = useState('');
+
+  // PDF Price Scanner State
+  const [isScanningPdf, setIsScanningPdf] = useState(false);
+  const pdfFileInputRef = useRef<HTMLInputElement>(null);
 
   // Canvas Refs & Dimensions
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -659,8 +668,79 @@ export default function CatalogStudio() {
     toast.success('Gemini API key saved!');
   };
 
+  // Upload & Scan PDF Price List
+  const handlePdfPriceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsScanningPdf(true);
+    toast.info("Scanning PDF Price List with Gemini 1.5 Flash...");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (geminiApiKey) formData.append("apiKey", geminiApiKey);
+
+      const res = await fetch("/api/scan-prices", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.message || data.error || "Failed to scan PDF price list");
+      }
+
+      toast.success(
+        `Scanned ${data.scannedCount || 0} items! Updated ${data.updatedCount || 0} products in database.`
+      );
+
+      // Refresh hotspots for current image if applicable
+      const currentImgId = customUploadedSrc ? customUploadedName : selectedImage;
+      if (currentImgId) {
+        const hRes = await fetch(`/api/hotspots?imageId=${encodeURIComponent(currentImgId)}`);
+        const hData = await hRes.json();
+        if (hData.success && hData.hotspots) {
+          setSavedHotspots(hData.hotspots.map((h: any) => ({ ...h, isDraft: false })));
+        }
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to scan PDF price list");
+    } finally {
+      setIsScanningPdf(false);
+      if (pdfFileInputRef.current) pdfFileInputRef.current.value = "";
+    }
+  };
+
   // Active image display URL
   const currentImageUrl = customUploadedSrc || (selectedImage ? `/product/${selectedImage}` : '');
+
+  // Admin Guard: Only Admin profiles can access /studio
+  if (!isProfileLoading && !isAdmin) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center select-none">
+        <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-500 flex items-center justify-center mb-4">
+          <ShieldAlert size={32} />
+        </div>
+        <h1 className="text-xl font-bold text-white mb-2">Admin Profile Required</h1>
+        <p className="text-sm text-slate-400 max-w-sm mb-6">
+          The Catalog Studio is restricted to Admin profiles only. You are currently browsing as {activeProfile?.name || "a Standard User"}.
+        </p>
+        <div className="flex gap-3">
+          <Link href="/select-profile">
+            <Button className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold px-4 py-2">
+              Switch Profile
+            </Button>
+          </Link>
+          <Link href="/">
+            <Button variant="outline" className="border-slate-800 text-slate-300 hover:bg-slate-900 rounded-xl text-xs font-bold px-4 py-2">
+              Back to Catalog
+            </Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-900 font-sans text-slate-100 flex flex-col select-none">
@@ -671,6 +751,15 @@ export default function CatalogStudio() {
         accept="image/*"
         className="hidden"
         onChange={handleFileUpload}
+      />
+
+      {/* Hidden file input for PDF price list */}
+      <input
+        ref={pdfFileInputRef}
+        type="file"
+        accept=".pdf,application/pdf"
+        className="hidden"
+        onChange={handlePdfPriceUpload}
       />
 
       {/* ====== TOP HEADER & TOOLBAR ====== */}
@@ -698,7 +787,7 @@ export default function CatalogStudio() {
             </div>
           </div>
 
-          {/* Page Selector & Upload Action */}
+          {/* Page Selector & Upload Actions */}
           <div className="flex items-center gap-2 flex-1 max-w-md min-w-[200px]">
             {customUploadedSrc ? (
               <div className="flex-1 flex items-center justify-between bg-indigo-950/60 border border-indigo-700/60 rounded-xl px-3 py-1.5">
@@ -742,6 +831,19 @@ export default function CatalogStudio() {
             >
               <Upload size={14} />
               <span className="hidden sm:inline">Upload</span>
+            </Button>
+
+            {/* PDF Price List Scanner Button */}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isScanningPdf}
+              onClick={() => pdfFileInputRef.current?.click()}
+              className="border-amber-700/50 bg-amber-950/30 text-amber-300 hover:bg-amber-950/60 rounded-xl text-xs font-semibold h-9 px-3 gap-1.5 shrink-0"
+              title="Upload PDF price list to scan rates with Gemini"
+            >
+              <FileText size={14} className={isScanningPdf ? 'animate-spin' : ''} />
+              <span className="hidden sm:inline">{isScanningPdf ? 'Scanning...' : 'Scan PDF Prices'}</span>
             </Button>
           </div>
 

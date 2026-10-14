@@ -2,41 +2,93 @@
 
 import { revalidatePath } from "next/cache";
 import prisma from "@/lib/prisma";
+import { uploadInvoiceToSupabase } from "@/lib/invoice";
 
 // 1. Save Order to Supabase
 export async function createOrder(formData: any, cartItems: any[], profileId?: string) {
   try {
     const targetProfileId = profileId || formData.profileId || null;
+    const clientId = formData.clientId || null;
+
+    // Calculate total amount
+    const totalAmount = cartItems.reduce((sum: number, item: any) => {
+      const rate = Number(item.rate || 0);
+      const qty = Number(item.qty || 1);
+      return sum + (item.totalPrice ? Number(item.totalPrice) : rate * qty);
+    }, 0);
+
     const order = await prisma.order.create({
       data: {
         shopName: formData.shopName,
         ownerName: formData.ownerName || "",
         phone: formData.phone,
-        address: formData.address,
+        address: formData.address || "",
         profileId: targetProfileId,
-        totalItems: cartItems.reduce((acc: any, item: any) => acc + item.qty, 0),
+        clientId: clientId,
+        totalItems: cartItems.reduce((acc: number, item: any) => acc + (Number(item.qty) || 1), 0),
+        totalAmount: totalAmount,
         items: {
-          create: cartItems.map((item: any) => ({
-            productName: item.productName,
-            variantDetail: item.variantDetail,
-            qty: item.qty,
-          })),
+          create: cartItems.map((item: any) => {
+            const rate = Number(item.rate || 0);
+            const qty = Number(item.qty || 1);
+            const unit = item.unit || "Pcs";
+            const totalPrice = item.totalPrice !== undefined ? Number(item.totalPrice) : rate * qty;
+            return {
+              productName: item.productName,
+              variantDetail: item.variantDetail || "",
+              qty: qty,
+              rate: rate,
+              unit: unit,
+              totalPrice: totalPrice,
+            };
+          }),
         },
       },
+      include: { items: true },
     });
+
+    // Try generating invoice and uploading to Supabase Storage
+    try {
+      await uploadInvoiceToSupabase(order as any);
+    } catch (e) {
+      console.warn("Invoice upload on order creation skipped:", e);
+    }
+
     return { success: true, orderId: order.id };
   } catch (error) {
-    console.error("Database Error:", error);
+    console.error("Database Error in createOrder:", error);
     return { success: false, error: "Failed to save order" };
   }
 }
 
 // 2. Approve Order
 export async function approveOrder(orderId: string) {
-  await prisma.order.update({
-    where: { id: orderId },
-    data: { status: "APPROVED" },
-  });
+  try {
+    const existing = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: { items: true },
+    });
+
+    let invoiceUrl = existing?.invoiceUrl;
+    if (existing) {
+      try {
+        invoiceUrl = await uploadInvoiceToSupabase(existing as any);
+      } catch (invErr) {
+        console.warn("Could not upload invoice on approve:", invErr);
+        invoiceUrl = `/api/orders/${orderId}/invoice`;
+      }
+    }
+
+    await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        status: "APPROVED",
+        ...(invoiceUrl ? { invoiceUrl } : {}),
+      },
+    });
+  } catch (err) {
+    console.error("Error approving order:", err);
+  }
   revalidatePath(`/order/${orderId}`);
 }
 

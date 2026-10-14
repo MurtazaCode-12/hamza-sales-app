@@ -1,5 +1,5 @@
 import { getOrder, approveOrder, markAsDispatched } from "@/app/actions";
-import { CheckCircle, Clock, MapPin, PackageCheck, Home, Phone, Zap } from "lucide-react";
+import { CheckCircle, Clock, MapPin, PackageCheck, Home, Phone, Zap, FileText, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { WhatsAppButton } from "@/components/ui/WhatsAppButton";
@@ -100,24 +100,73 @@ export default async function OrderPage({ params, searchParams }: Props) {
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Qty</p>
             </div>
             <div className="divide-y divide-slate-50">
-              {order.items.map((item: any) => (
-                <div key={item.id} className="px-5 py-3.5 flex justify-between items-center">
-                  <div className="min-w-0 flex-1 pr-4">
-                    <p className="font-semibold text-slate-900 text-sm truncate">{item.productName}</p>
-                    <span className="text-[10px] text-slate-400 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded mt-1 inline-block font-medium">
-                      {item.variantDetail}
-                    </span>
+              {order.items.map((item: any) => {
+                const unit = item.unit || 'Pcs';
+                const rate = Number(item.rate || 0);
+                const lineTotal = item.totalPrice && item.totalPrice > 0 ? Number(item.totalPrice) : rate * item.qty;
+
+                return (
+                  <div key={item.id} className="px-5 py-3.5 flex justify-between items-center">
+                    <div className="min-w-0 flex-1 pr-4">
+                      <p className="font-semibold text-slate-900 text-sm truncate">{item.productName}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        {item.variantDetail && (
+                          <span className="text-[10px] text-slate-400 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded font-medium">
+                            {item.variantDetail}
+                          </span>
+                        )}
+                        {rate > 0 && (
+                          <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-100 px-1.5 py-0.5 rounded font-bold">
+                            ₹{rate.toFixed(2)} / {unit}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="font-bold text-slate-900 bg-slate-100 px-2.5 py-1 rounded-full text-xs inline-block">
+                        {item.qty} {unit}
+                      </span>
+                      {lineTotal > 0 && (
+                        <p className="text-xs font-extrabold text-slate-700 mt-1">
+                          ₹{lineTotal.toFixed(2)}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <span className="font-bold text-slate-900 bg-slate-100 h-8 w-8 rounded-full flex items-center justify-center text-sm shrink-0">
-                    {item.qty}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
               <div className="px-5 py-4 flex justify-between items-center bg-slate-50">
                 <span className="text-sm font-bold text-slate-600">Total Quantity</span>
-                <span className="text-lg font-extrabold text-slate-900">{order.totalItems}</span>
+                <span className="text-lg font-extrabold text-slate-900">{order.totalItems} items</span>
+              </div>
+              {order.totalAmount && Number(order.totalAmount) > 0 ? (
+                <div className="px-5 py-4 flex justify-between items-center bg-emerald-50/60 border-t border-emerald-100">
+                  <span className="text-sm font-bold text-emerald-900">Grand Total</span>
+                  <span className="text-xl font-black text-emerald-700">₹{Number(order.totalAmount).toFixed(2)}</span>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {/* Download PDF Invoice Bar */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-sm flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+                <FileText size={20} />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-900">Official PDF Invoice</p>
+                <p className="text-[10px] text-slate-400">Printable A4 wholesale tax invoice</p>
               </div>
             </div>
+            <a
+              href={order.invoiceUrl || `/api/orders/${order.id}/invoice`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow transition-all active:scale-95"
+            >
+              <Download size={14} /> Download
+            </a>
           </div>
 
           {/* Action Buttons */}

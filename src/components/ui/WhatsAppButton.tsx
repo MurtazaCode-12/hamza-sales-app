@@ -33,24 +33,51 @@ export function WhatsAppButton({ order }: { order: any }) {
       duration: 4000,
     });
 
+    // Calculate grand total if not present
+    let totalAmt = Number(order.totalAmount || 0);
+    if (!totalAmt && order.items) {
+      totalAmt = order.items.reduce((sum: number, it: any) => {
+        const rate = Number(it.rate || 0);
+        const qty = Number(it.qty || 1);
+        return sum + (it.totalPrice ? Number(it.totalPrice) : rate * qty);
+      }, 0);
+    }
+
+    // Determine invoice URL
+    let invoiceUrl = order.invoiceUrl;
+    if (!invoiceUrl || invoiceUrl.startsWith('/')) {
+      const origin = typeof window !== 'undefined' ? window.location.origin : 'https://hamza-sales-app.vercel.app';
+      invoiceUrl = `${origin}/api/orders/${order.id}/invoice`;
+    }
+
     // 3. Construct WhatsApp Message
     let msg = `*🚀 NEW APPROVED ORDER - ${order.shopName}*\n\n`;
     msg += `*CLIENT DETAILS:*\n`;
     msg += `👤 Owner: ${order.ownerName || "N/A"}\n`;
     msg += `📞 Phone: ${order.phone}\n`;
-    msg += `📍 Location: ${order.address}\n`;
+    msg += `📍 Location: ${order.address || "Pune"}\n`;
     msg += `----------------------------\n`;
     
     msg += `*ORDER ITEMS:*\n`;
-    order.items.forEach((item: any, index: number) => {
+    order.items?.forEach((item: any, index: number) => {
+      const unit = item.unit || "Pcs";
+      const rate = Number(item.rate || 0);
+      const lineTotal = item.totalPrice && item.totalPrice > 0 ? Number(item.totalPrice) : rate * item.qty;
+      const rateStr = rate > 0 ? ` @ ₹${rate.toFixed(2)}/${unit}` : '';
+      const totalStr = lineTotal > 0 ? ` = *₹${lineTotal.toFixed(2)}*` : '';
+
       msg += `${index + 1}. ${item.productName}\n`;
-      msg += `   └ ${item.variantDetail}  (Qty: *${item.qty}*)\n`;
+      msg += `   └ ${item.variantDetail || ''} (Qty: *${item.qty} ${unit}*${rateStr}${totalStr})\n`;
     });
     
     msg += `----------------------------\n`;
     msg += `📦 *Total Items: ${order.totalItems}*\n`;
+    if (totalAmt > 0) {
+      msg += `💰 *Grand Total: ₹${totalAmt.toFixed(2)}*\n`;
+    }
     msg += `✅ Status: APPROVED by Client\n\n`;
-    msg += `*📄 View Full Invoice:* \n${window.location.href.split('?')[0]}`;
+    msg += `*📄 Download Official Invoice PDF:* \n${invoiceUrl}\n\n`;
+    msg += `*🌐 View Order in App:* \n${window.location.href.split('?')[0]}`;
 
     // 4. Open WhatsApp
     const adminPhone = "919921015227"; 

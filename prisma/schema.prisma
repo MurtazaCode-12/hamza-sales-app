@@ -5,7 +5,7 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"  // <--- Crucial: set to postgresql
+  provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
@@ -15,25 +15,63 @@ model Profile {
   name      String
   role      String   @default("user") // "admin" | "user"
   avatar    String?
+  email     String?  @unique
   createdAt DateTime @default(now())
   orders    Order[]
 }
 
+model Client {
+  id        String   @id @default(cuid())
+  name      String
+  ownerName String?
+  phone     String
+  address   String?
+  city      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  orders    Order[]
+
+  @@index([name])
+  @@index([phone])
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  name        String
+  category    String?
+  rate        Float?
+  unit        String?  @default("Pcs")
+  image       String?
+  catalogPage String?
+  types       String[] @default([])
+  sizes       String[] @default([])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  @@index([name])
+  @@index([catalogPage])
+}
+
 model Order {
-  id         String      @id @default(cuid())
-  createdAt  DateTime    @default(now())
-  shopName   String
-  ownerName  String?
-  phone      String
-  address    String?
-  status     String      @default("PENDING") // PENDING, APPROVED
-  totalItems Int
-  items      OrderItem[]
-  profileId  String?
-  profile    Profile?    @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  id          String      @id @default(cuid())
+  createdAt   DateTime    @default(now())
+  shopName    String
+  ownerName   String?
+  phone       String
+  address     String?
+  status      String      @default("PENDING") // PENDING, APPROVED
+  totalItems  Int
+  totalAmount Float?      @default(0)
+  invoiceUrl  String?
+  items       OrderItem[]
+  profileId   String?
+  profile     Profile?    @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  clientId    String?
+  client      Client?     @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([profileId])
+  @@index([clientId])
 }
 
 model OrderItem {
@@ -41,8 +79,11 @@ model OrderItem {
   productName   String
   variantDetail String
   qty           Int
+  rate          Float?  @default(0)
+  unit          String? @default("Pcs")
+  totalPrice    Float?  @default(0)
   orderId       String
-  order         Order   @relation(fields: [orderId], references: [id])
+  order         Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
 }
 
 model CatalogHotspot {

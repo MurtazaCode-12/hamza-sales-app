@@ -236,14 +236,21 @@ export default function SelectProfilePage() {
           </div>
         )}
 
-        {/* Bottom Catalog Shortcut */}
-        <div className="mt-12 text-center">
+        {/* Bottom Shortcuts */}
+        <div className="mt-12 flex flex-wrap items-center justify-center gap-3">
           <Link
             href="/"
             className="inline-flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors py-2 px-4 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-slate-700"
           >
             <Layers size={14} className="text-indigo-400" />
             <span>Continue to Product Catalog</span>
+          </Link>
+          <Link
+            href="/login"
+            className="inline-flex items-center gap-2 text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors py-2 px-4 rounded-xl bg-indigo-950/40 border border-indigo-800/60 hover:border-indigo-700"
+          >
+            <ShieldCheck size={14} className="text-indigo-400" />
+            <span>Supabase Auth Login</span>
           </Link>
         </div>
       </div>
