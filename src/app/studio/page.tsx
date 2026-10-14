@@ -46,6 +46,19 @@ export interface StudioHotspot {
 
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 
+// Resilient fetch helper that handles HTML/non-JSON responses gracefully
+async function safeJsonFetch(url: string, options?: RequestInit): Promise<{ ok: boolean; status: number; data: any }> {
+  const res = await fetch(url, options);
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    const text = await res.text();
+    console.warn(`Non-JSON response from ${url}:`, res.status, text.slice(0, 200));
+    throw new Error(`Server returned status ${res.status}. Please try again.`);
+  }
+  const data = await res.json();
+  return { ok: res.ok, status: res.status, data };
+}
+
 export default function CatalogStudio() {
   const { profile: activeProfile, isAdmin, isLoading: isProfileLoading } = useProfile();
 
@@ -113,9 +126,8 @@ export default function CatalogStudio() {
 
   const loadSavedHotspots = async (imageId: string) => {
     try {
-      const res = await fetch(`/api/hotspots?imageId=${encodeURIComponent(imageId)}`);
-      const data = await res.json();
-      if (data.success) {
+      const { ok, data } = await safeJsonFetch(`/api/hotspots?imageId=${encodeURIComponent(imageId)}`);
+      if (ok && data?.success) {
         const mapped: StudioHotspot[] = (data.hotspots || []).map((h: any) => ({
           ...h,
           isDraft: false,
@@ -154,7 +166,7 @@ export default function CatalogStudio() {
       const base64Data = base64Override || (await getImageBase64());
       const currentImageId = customUploadedSrc ? customUploadedName : selectedImage;
 
-      const res = await fetch('/api/gemini-detect', {
+      const { ok, data } = await safeJsonFetch('/api/gemini-detect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -164,20 +176,18 @@ export default function CatalogStudio() {
         }),
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        if (data.error === 'MISSING_API_KEY') {
+      if (!ok) {
+        if (data?.error === 'MISSING_API_KEY') {
           setIsApiKeyModalOpen(true);
           toast.error('Gemini API key is required. Please enter your API key.');
         } else {
-          toast.error(`Gemini Error: ${data.message || data.error}`);
+          toast.error(`Gemini Error: ${data?.message || data?.error || 'Detection failed'}`);
         }
         setIsGeminiAnalyzing(false);
         return;
       }
 
-      if (!data.products || data.products.length === 0) {
+      if (!data?.products || data.products.length === 0) {
         toast.info('Gemini analyzed the image but did not detect distinct products.');
         setIsGeminiAnalyzing(false);
         return;
@@ -205,7 +215,7 @@ export default function CatalogStudio() {
       });
     } catch (err: any) {
       console.error('Gemini Detection Error:', err);
-      toast.error('Failed to communicate with Gemini API');
+      toast.error(err?.message || 'Failed to communicate with Gemini API');
     } finally {
       setIsGeminiAnalyzing(false);
     }
@@ -429,7 +439,7 @@ export default function CatalogStudio() {
 
     try {
       if (targetEditHotspot.isDraft) {
-        const res = await fetch('/api/hotspots', {
+        const { ok, data } = await safeJsonFetch('/api/hotspots', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -444,9 +454,8 @@ export default function CatalogStudio() {
             height: targetEditHotspot.height,
           }),
         });
-        const data = await res.json();
 
-        if (data.success && data.hotspot) {
+        if (ok && data?.success && data?.hotspot) {
           toast.success(`Hotspot "${formData.name}" saved!`);
           setDraftHotspots((prev) => prev.filter((h) => h.id !== targetEditHotspot.id));
           const newSaved: StudioHotspot = {
@@ -459,14 +468,15 @@ export default function CatalogStudio() {
           setIsFormOpen(false);
           setTargetEditHotspot(null);
         } else {
-          toast.error(data.error || 'Failed to save hotspot to database');
+          toast.error(data?.error || 'Failed to save hotspot to database');
         }
       } else {
-        const res = await fetch('/api/hotspots', {
+        const { ok, data } = await safeJsonFetch('/api/hotspots', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             id: targetEditHotspot.id,
+            imageId: currentImgId,
             name: formData.name.trim(),
             price: formData.price.trim(),
             types: parsedTypes,
@@ -477,9 +487,8 @@ export default function CatalogStudio() {
             height: targetEditHotspot.height,
           }),
         });
-        const data = await res.json();
 
-        if (data.success) {
+        if (ok && data?.success) {
           toast.success(`Updated "${formData.name}"!`);
           setSavedHotspots((prev) =>
             prev.map((h) =>
@@ -498,7 +507,7 @@ export default function CatalogStudio() {
           setIsFormOpen(false);
           setTargetEditHotspot(null);
         } else {
-          toast.error(data.error || 'Failed to update hotspot');
+          toast.error(data?.error || 'Failed to update hotspot');
         }
       }
     } catch (err: any) {
@@ -516,7 +525,7 @@ export default function CatalogStudio() {
     const currentImgId = customUploadedSrc ? customUploadedName : selectedImage;
 
     try {
-      const res = await fetch('/api/hotspots', {
+      const { ok, data } = await safeJsonFetch('/api/hotspots', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -531,9 +540,8 @@ export default function CatalogStudio() {
           height: draft.height,
         }),
       });
-      const data = await res.json();
 
-      if (data.success && data.hotspot) {
+      if (ok && data?.success && data?.hotspot) {
         toast.success(`Saved "${draft.name}"`);
         setDraftHotspots((prev) => prev.filter((h) => h.id !== draft.id));
         const newSaved: StudioHotspot = {
@@ -543,10 +551,10 @@ export default function CatalogStudio() {
         };
         setSavedHotspots((prev) => [...prev, newSaved]);
       } else {
-        toast.error(data.error || 'Failed to save hotspot');
+        toast.error(data?.error || 'Failed to save hotspot');
       }
     } catch (err: any) {
-      toast.error('Failed to save hotspot');
+      toast.error(err?.message || 'Failed to save hotspot');
     } finally {
       setIsSaving(false);
     }
@@ -556,7 +564,7 @@ export default function CatalogStudio() {
   const handleSaveAdjustedPosition = async (hotspot: StudioHotspot, e?: React.MouseEvent) => {
     e?.stopPropagation();
     try {
-      const res = await fetch('/api/hotspots', {
+      const { ok, data } = await safeJsonFetch('/api/hotspots', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -567,18 +575,17 @@ export default function CatalogStudio() {
           height: hotspot.height,
         }),
       });
-      const data = await res.json();
 
-      if (data.success) {
+      if (ok && data?.success) {
         toast.success('Updated hotspot position');
         setSavedHotspots((prev) =>
           prev.map((h) => (h.id === hotspot.id ? { ...h, isDirty: false } : h))
         );
       } else {
-        toast.error(data.error || 'Failed to save position');
+        toast.error(data?.error || 'Failed to save position');
       }
-    } catch (err) {
-      toast.error('Failed to save position');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to save position');
     }
   };
 
@@ -590,7 +597,7 @@ export default function CatalogStudio() {
     const currentImgId = customUploadedSrc ? customUploadedName : selectedImage;
 
     try {
-      const res = await fetch('/api/hotspots', {
+      const { ok, data } = await safeJsonFetch('/api/hotspots', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -607,9 +614,8 @@ export default function CatalogStudio() {
           })),
         }),
       });
-      const data = await res.json();
 
-      if (data.success) {
+      if (ok && data?.success) {
         toast.success(`🎉 Successfully saved ${data.count} products!`);
         if (!customUploadedSrc) {
           loadSavedHotspots(selectedImage);
@@ -621,10 +627,10 @@ export default function CatalogStudio() {
           setDraftHotspots([]);
         }
       } else {
-        toast.error(data.error || 'Failed to batch save');
+        toast.error(data?.error || 'Failed to batch save');
       }
-    } catch (err) {
-      toast.error('Failed to batch save');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to batch save');
     } finally {
       setIsSaving(false);
     }
@@ -642,20 +648,19 @@ export default function CatalogStudio() {
     }
 
     try {
-      const res = await fetch(`/api/hotspots?id=${encodeURIComponent(id)}`, {
+      const { ok, data } = await safeJsonFetch(`/api/hotspots?id=${encodeURIComponent(id)}`, {
         method: 'DELETE',
       });
-      const data = await res.json();
 
-      if (data.success) {
+      if (ok && data?.success) {
         setSavedHotspots((prev) => prev.filter((h) => h.id !== id));
         if (selectedHotspotId === id) setSelectedHotspotId(null);
         toast.success('Hotspot deleted from database');
       } else {
-        toast.error(data.error || 'Failed to delete');
+        toast.error(data?.error || 'Failed to delete');
       }
-    } catch (err) {
-      toast.error('Failed to delete');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to delete');
     }
   };
 
@@ -681,14 +686,13 @@ export default function CatalogStudio() {
       formData.append("file", file);
       if (geminiApiKey) formData.append("apiKey", geminiApiKey);
 
-      const res = await fetch("/api/scan-prices", {
+      const { ok, data } = await safeJsonFetch("/api/scan-prices", {
         method: "POST",
         body: formData,
       });
 
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error(data.message || data.error || "Failed to scan PDF price list");
+      if (!ok || !data?.success) {
+        throw new Error(data?.message || data?.error || "Failed to scan PDF price list");
       }
 
       toast.success(
@@ -698,17 +702,15 @@ export default function CatalogStudio() {
       // Refresh hotspots for current image if applicable
       const currentImgId = customUploadedSrc ? customUploadedName : selectedImage;
       if (currentImgId) {
-        const hRes = await fetch(`/api/hotspots?imageId=${encodeURIComponent(currentImgId)}`);
-        const hData = await hRes.json();
-        if (hData.success && hData.hotspots) {
+        const { ok: hOk, data: hData } = await safeJsonFetch(`/api/hotspots?imageId=${encodeURIComponent(currentImgId)}`);
+        if (hOk && hData?.success && hData?.hotspots) {
           setSavedHotspots(hData.hotspots.map((h: any) => ({ ...h, isDraft: false })));
         }
       }
     } catch (err: any) {
-      toast.error(err.message || "Failed to scan PDF price list");
+      toast.error(err?.message || "Failed to scan PDF price list");
     } finally {
       setIsScanningPdf(false);
-      if (pdfFileInputRef.current) pdfFileInputRef.current.value = "";
     }
   };
 
