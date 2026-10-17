@@ -26,6 +26,7 @@ import {
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { useProfile } from '@/context/ProfileContext';
+import { getDefaultGeminiKey } from '@/lib/geminiKey';
 
 export interface StudioHotspot {
   id: string;
@@ -59,6 +60,8 @@ async function safeJsonFetch(url: string, options?: RequestInit): Promise<{ ok: 
   return { ok: res.ok, status: res.status, data };
 }
 
+const DEFAULT_GEMINI_KEY = getDefaultGeminiKey();
+
 export default function CatalogStudio() {
   const { profile: activeProfile, isAdmin, isLoading: isProfileLoading } = useProfile();
 
@@ -73,9 +76,9 @@ export default function CatalogStudio() {
 
   // Gemini API & Loading State
   const [isGeminiAnalyzing, setIsGeminiAnalyzing] = useState(false);
-  const [geminiApiKey, setGeminiApiKey] = useState<string>('');
+  const [geminiApiKey, setGeminiApiKey] = useState<string>(DEFAULT_GEMINI_KEY);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
-  const [tempApiKeyInput, setTempApiKeyInput] = useState('');
+  const [tempApiKeyInput, setTempApiKeyInput] = useState(DEFAULT_GEMINI_KEY);
 
   // PDF Price Scanner State
   const [isScanningPdf, setIsScanningPdf] = useState(false);
@@ -100,12 +103,13 @@ export default function CatalogStudio() {
   const [formData, setFormData] = useState({ name: '', price: '', types: '', sizes: '' });
   const [isSaving, setIsSaving] = useState(false);
 
-  // Load API Key from localStorage
+  // Load API Key from localStorage (fallback to DEFAULT_GEMINI_KEY)
   useEffect(() => {
-    const savedKey = localStorage.getItem('gemini_api_key');
+    const savedKey = localStorage.getItem('gemini_api_key') || DEFAULT_GEMINI_KEY;
     if (savedKey) {
       setGeminiApiKey(savedKey);
       setTempApiKeyInput(savedKey);
+      localStorage.setItem('gemini_api_key', savedKey);
     }
   }, []);
 
@@ -157,10 +161,10 @@ export default function CatalogStudio() {
     });
   };
 
-  // Call Gemini 1.5 Flash API for Object Detection
+  // Call Gemini 2.5 Flash API for Object Detection & Variant Extraction
   const runGeminiDetection = async (base64Override?: string) => {
     setIsGeminiAnalyzing(true);
-    toast.info('Sending image to Gemini 1.5 Flash for product detection...', { duration: 3000 });
+    toast.info('Sending image to Gemini 2.5 Flash for product detection...', { duration: 3000 });
 
     try {
       const base64Data = base64Override || (await getImageBase64());
@@ -172,7 +176,7 @@ export default function CatalogStudio() {
         body: JSON.stringify({
           imageBase64: base64Data,
           mimeType: 'image/jpeg',
-          apiKey: geminiApiKey || undefined,
+          apiKey: geminiApiKey || DEFAULT_GEMINI_KEY,
         }),
       });
 
@@ -193,14 +197,14 @@ export default function CatalogStudio() {
         return;
       }
 
-      // Format parsed Gemini products as draft highlights
+      // Format parsed Gemini products as draft highlights with types and sizes
       const newDrafts: StudioHotspot[] = data.products.map((p: any, idx: number) => ({
         id: `gemini-${Date.now()}-${idx}`,
         imageId: currentImageId,
         name: p.name || `Product #${idx + 1}`,
         price: p.price || '',
-        types: [],
-        sizes: [],
+        types: Array.isArray(p.types) ? p.types : [],
+        sizes: Array.isArray(p.sizes) ? p.sizes : [],
         top: p.top,
         left: p.left,
         width: p.width,
@@ -210,8 +214,8 @@ export default function CatalogStudio() {
       }));
 
       setDraftHotspots(newDrafts);
-      toast.success(`✨ Gemini 1.5 Flash detected ${newDrafts.length} product(s)!`, {
-        description: 'You can now manually adjust, resize, edit, or save them.',
+      toast.success(`✨ Gemini 2.5 Flash detected ${newDrafts.length} product(s)!`, {
+        description: 'Auto-extracted variants, sizes, and bounding boxes.',
       });
     } catch (err: any) {
       console.error('Gemini Detection Error:', err);
@@ -679,7 +683,7 @@ export default function CatalogStudio() {
     if (!file) return;
 
     setIsScanningPdf(true);
-    toast.info("Scanning PDF Price List with Gemini 1.5 Flash...");
+    toast.info("Scanning PDF Price List with Gemini 2.5 Flash...");
 
     try {
       const formData = new FormData();
@@ -941,6 +945,16 @@ export default function CatalogStudio() {
                   <p className="text-[10px] text-slate-400 font-mono">
                     T:{h.top}% L:{h.left}% W:{h.width}% H:{h.height}%
                   </p>
+                  {h.types && h.types.length > 0 && (
+                    <p className="text-[10px] text-slate-300 truncate max-w-[200px]">
+                      Types: {h.types.join(', ')}
+                    </p>
+                  )}
+                  {h.sizes && h.sizes.length > 0 && (
+                    <p className="text-[10px] text-indigo-300 truncate max-w-[200px]">
+                      Sizes: {h.sizes.join(', ')}
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-1">
                   {h.isDraft && (
@@ -1030,6 +1044,26 @@ export default function CatalogStudio() {
                               Price: {h.price}
                             </p>
                           )}
+                          {h.types && h.types.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                              <span className="text-[9px] text-slate-400 font-semibold mr-0.5">Types:</span>
+                              {h.types.map((t, idx) => (
+                                <span key={idx} className="text-[9px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded border border-slate-700/80 font-mono">
+                                  {t}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {h.sizes && h.sizes.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-1 mt-1">
+                              <span className="text-[9px] text-indigo-400 font-semibold mr-0.5">Sizes:</span>
+                              {h.sizes.map((s, idx) => (
+                                <span key={idx} className="text-[9px] bg-indigo-950/70 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-800/60 font-mono">
+                                  {s}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
 
                         {/* Card Actions */}
@@ -1112,10 +1146,10 @@ export default function CatalogStudio() {
                       </div>
                       <div className="mt-4 text-center">
                         <h4 className="text-sm font-bold text-white tracking-wide">
-                          Gemini 1.5 Flash Analyzing Image...
+                          Gemini 2.5 Flash Analyzing Image...
                         </h4>
                         <p className="text-xs text-slate-400 mt-1 max-w-xs">
-                          Detecting distinct products and computing 2D bounding boxes [ymin, xmin, ymax, xmax]
+                          Detecting distinct products, types, sizes, and computing 2D bounding boxes
                         </p>
                       </div>
                       {/* Scanning laser beam animation */}
@@ -1378,7 +1412,7 @@ export default function CatalogStudio() {
               </button>
             </div>
             <p className="text-xs text-slate-400 mb-4">
-              Enter your Google Gemini API key to enable 2D bounding box product detection with Gemini 1.5 Flash. Key is saved locally in your browser.
+              Enter your Google Gemini API key to enable 2D bounding box product detection, variant types, and sizes with Gemini 2.5 Flash. Key is saved locally in your browser.
             </p>
             <input
               type="password"

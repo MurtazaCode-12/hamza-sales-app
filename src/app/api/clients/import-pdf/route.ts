@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { extractTextFromPdf } from '@/lib/pdfHelper';
+import { getDefaultGeminiKey } from '@/lib/geminiKey';
 
 export async function POST(req: NextRequest) {
   try {
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
     // Try to extract clients using Gemini API if key is available
     let extractedClients: Array<{ name: string; phone: string; address?: string; ownerName?: string; city?: string }> = [];
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = getDefaultGeminiKey();
     if (apiKey) {
       try {
         const prompt = `Extract all client, customer, or shop directory details from this PDF text.
@@ -49,20 +50,29 @@ Respond ONLY with a valid JSON array of objects:
 PDF Text content:
 ${pdfText.slice(0, 15000)}`;
 
-        const geminiRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-          {
+        const requestPayload = {
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.2,
+          },
+        };
+
+        let geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+        let geminiRes = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestPayload),
+        });
+
+        if (!geminiRes.ok && (geminiRes.status === 404 || geminiRes.status === 400)) {
+          geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
+          geminiRes = await fetch(geminiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: {
-                responseMimeType: 'application/json',
-                temperature: 0.2,
-              },
-            }),
-          }
-        );
+            body: JSON.stringify(requestPayload),
+          });
+        }
 
         if (geminiRes.ok) {
           const geminiData = await geminiRes.json();

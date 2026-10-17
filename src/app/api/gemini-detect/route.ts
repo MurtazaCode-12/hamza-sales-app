@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getDefaultGeminiKey } from '@/lib/geminiKey';
 
 export async function POST(req: NextRequest) {
   try {
@@ -12,7 +13,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const apiKey = clientApiKey || process.env.GEMINI_API_KEY;
+    const apiKey = clientApiKey || getDefaultGeminiKey();
     if (!apiKey) {
       return NextResponse.json(
         {
@@ -28,11 +29,13 @@ export async function POST(req: NextRequest) {
     const cleanBase64 = imageBase64.replace(/^data:image\/[a-z]+;base64,/, '');
 
     const prompt = `You are an expert product detection model for sales and hardware catalogs.
-Detect every distinct product, item, lock, handle, hinge, bolt, tool, or packaged merchandise in this image.
+Detect every distinct product, item, lock, handle, hinge, bolt, tool, bracket, or packaged merchandise in this image.
 For EVERY distinct product detected, provide:
-1. "name": A concise, descriptive product title or label (e.g. "Mortice Lock 200mm", "SS Butt Hinge", "Tower Bolt").
+1. "name": A concise, descriptive product title or label (e.g. "Bearing Kada", "Mortice Lock 200mm", "SS Butt Hinge", "Tower Bolt", "S Hook", "Jhula Rod").
 2. "box_2d": The exact 2D bounding box coordinates formatted as an array [ymin, xmin, ymax, xmax] normalized on a 0 to 1000 integer scale, where ymin is top edge, xmin is left edge, ymax is bottom edge, and xmax is right edge.
-3. "estimated_price": Any visible price tag or empty string if not visible.
+3. "estimated_price": Any visible price tag, rate, or empty string if not visible.
+4. "types": Array of strings of all materials, finishes, or product types listed for this product in text or tables (e.g. ["Bush", "Moulding", "S.S."], ["Brass", "Antique", "Black"], ["Special", "S.S."]). If none or unknown, return [].
+5. "sizes": Array of strings of all dimensions, weights, lengths, or sizes listed for this product (e.g. ["1 kg", "1.200 kg", "1.400 kg"], ["12\"", "15\""], ["Small", "Big"], ["25mm", "32mm"]). If none or unknown, return [].
 
 Return ONLY a valid JSON object matching this schema:
 {
@@ -40,7 +43,9 @@ Return ONLY a valid JSON object matching this schema:
     {
       "name": "string",
       "box_2d": [ymin, xmin, ymax, xmax],
-      "estimated_price": "string"
+      "estimated_price": "string",
+      "types": ["string"],
+      "sizes": ["string"]
     }
   ]
 }`;
@@ -65,17 +70,17 @@ Return ONLY a valid JSON object matching this schema:
       },
     };
 
-    // Try gemini-1.5-flash endpoint
-    let endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    // Try gemini-2.5-flash endpoint
+    let endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
     let res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestPayload),
     });
 
-    // Fallback to gemini-2.5-flash or gemini-1.5-pro if 1.5-flash is temporarily unavailable
-    if (!res.ok && res.status === 404) {
-      endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    // Fallback to gemini-flash-latest or gemini-1.5-flash if 2.5-flash is temporarily unavailable
+    if (!res.ok && (res.status === 404 || res.status === 400)) {
+      endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
       res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -146,10 +151,19 @@ Return ONLY a valid JSON object matching this schema:
         const height = Number(Math.max(2, Math.min(100 - top, ((ymax - ymin) / scale) * 100)).toFixed(2));
         const width = Number(Math.max(2, Math.min(100 - left, ((xmax - xmin) / scale) * 100)).toFixed(2));
 
+        const types = Array.isArray(item.types)
+          ? item.types.map((t: any) => String(t).trim()).filter(Boolean)
+          : [];
+        const sizes = Array.isArray(item.sizes)
+          ? item.sizes.map((s: any) => String(s).trim()).filter(Boolean)
+          : [];
+
         return {
           id: `gemini-${Date.now()}-${idx}`,
           name: item.name || `Product #${idx + 1}`,
           price: item.estimated_price || '',
+          types,
+          sizes,
           top,
           left,
           width,

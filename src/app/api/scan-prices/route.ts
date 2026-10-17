@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { extractTextFromPdf } from '@/lib/pdfHelper';
+import { getDefaultGeminiKey } from '@/lib/geminiKey';
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,7 +16,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const apiKey = clientApiKey || process.env.GEMINI_API_KEY;
+    const apiKey = clientApiKey || getDefaultGeminiKey();
     if (!apiKey) {
       return NextResponse.json(
         {
@@ -40,7 +41,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Call Gemini 1.5 Flash API to parse prices and products
+    // Call Gemini 2.5 Flash API to parse prices and products
     const prompt = `You are an expert price-list parser for hardware, locks, hinges, and building materials.
 Extract every product name and its corresponding price / rate from the provided catalog text.
 Standard units should be mapped to one of: "Packet", "Pcs", "Box", "Dozen", "Set" (default to "Pcs" if not specified).
@@ -58,18 +59,29 @@ Return ONLY a valid JSON array of objects with the exact schema:
 PDF Text content:
 ${pdfText.slice(0, 20000)}`;
 
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-    const geminiResponse = await fetch(geminiUrl, {
+    const requestPayload = {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.1,
+      },
+    };
+
+    let geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    let geminiResponse = await fetch(geminiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.1,
-        },
-      }),
+      body: JSON.stringify(requestPayload),
     });
+
+    if (!geminiResponse.ok && (geminiResponse.status === 404 || geminiResponse.status === 400)) {
+      geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
+      geminiResponse = await fetch(geminiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestPayload),
+      });
+    }
 
     if (!geminiResponse.ok) {
       const errText = await geminiResponse.text();
