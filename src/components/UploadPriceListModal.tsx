@@ -75,6 +75,20 @@ export function UploadPriceListModal({ isOpen, onClose, onSuccess }: UploadPrice
     }
   };
 
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  // Live timer while scanning
+  React.useEffect(() => {
+    let timer: any;
+    if (isScanning) {
+      setElapsedSeconds(0);
+      timer = setInterval(() => {
+        setElapsedSeconds((prev) => prev + 1);
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [isScanning]);
+
   const handleStartScan = async () => {
     if (!file) {
       toast.error("Please select a price list file first");
@@ -113,7 +127,10 @@ export function UploadPriceListModal({ isOpen, onClose, onSuccess }: UploadPrice
       setScanStep("Loading catalog context...");
       let catalogContextSnippet: any[] = [];
       try {
-        const ctxRes = await fetch("/api/hotspots/context");
+        const ctxController = new AbortController();
+        const ctxTimeout = setTimeout(() => ctxController.abort(), 6000);
+        const ctxRes = await fetch("/api/hotspots/context", { signal: ctxController.signal });
+        clearTimeout(ctxTimeout);
         if (ctxRes.ok) {
           const ctxData = await ctxRes.json();
           if (Array.isArray(ctxData?.context)) {
@@ -136,7 +153,7 @@ Rules:
 5. If a product has a type/finish (e.g., ALTO, RECO, Ultra Key, Regular, Brass, Antique), extract it into "type".
 
 Known products currently in our catalog:
-${JSON.stringify(catalogContextSnippet.slice(0, 70), null, 2)}
+${JSON.stringify(catalogContextSnippet.slice(0, 50), null, 2)}
 
 Return ONLY a valid JSON array of objects with this exact schema:
 [
@@ -154,9 +171,9 @@ Return ONLY a valid JSON array of objects with this exact schema:
       let parsedItems: any[] = [];
       let clientScanSuccessful = false;
 
-      // Strategy 1: Direct client-side Gemini extraction (bypasses Vercel serverless 10s timeout)
+      // Strategy 1: Direct client-side Gemini extraction
       if (apiKey) {
-        setScanStep("Gemini 2.5 Flash analyzing pages & price tables...");
+        setScanStep("Gemini 2.5 Flash analyzing catalog & price tables...");
 
         const geminiPayload = {
           contents: [
@@ -180,17 +197,21 @@ Return ONLY a valid JSON array of objects with this exact schema:
 
         const endpoints = [
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
         ];
 
         for (const url of endpoints) {
           try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s safety timeout
+
             const gRes = await fetch(url, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(geminiPayload),
+              signal: controller.signal,
             });
+            clearTimeout(timeoutId);
 
             if (gRes.ok) {
               const gData = await gRes.json();
@@ -219,7 +240,7 @@ Return ONLY a valid JSON array of objects with this exact schema:
         }
       }
 
-      // If client-side Gemini extracted items, batch sync to Supabase in 1 fast call
+      // If client-side Gemini extracted items, bulk sync to Supabase in 1 single SQL query
       if (clientScanSuccessful && Array.isArray(parsedItems) && parsedItems.length > 0) {
         setScanStep(`Syncing ${parsedItems.length} extracted rates into Supabase...`);
 
@@ -381,15 +402,15 @@ Return ONLY a valid JSON array of objects with this exact schema:
 
             {isScanning && (
               <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 text-center space-y-2">
-                <div className="flex items-center justify-center gap-2 text-indigo-400 font-bold text-xs">
-                  <RotateCw size={15} className="animate-spin" />
-                  <span>{scanStep}</span>
+                <div className="flex items-center justify-center gap-2 text-amber-400 font-bold text-xs">
+                  <RotateCw size={15} className="animate-spin text-amber-400" />
+                  <span>{scanStep} {elapsedSeconds > 0 ? `(${elapsedSeconds}s)` : ''}</span>
                 </div>
                 <p className="text-[11px] text-slate-500">
-                  Processing pages with Google Gemini 2.5 Flash. This usually takes 5-10 seconds.
+                  AI document parsing &amp; sub-second Supabase bulk rate synchronization.
                 </p>
                 <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                  <div className="bg-gradient-to-r from-blue-500 via-indigo-500 to-amber-500 h-full w-full animate-pulse" />
+                  <div className="bg-gradient-to-r from-amber-500 via-indigo-500 to-emerald-500 h-full w-full animate-pulse" />
                 </div>
               </div>
             )}

@@ -55,8 +55,8 @@ export async function POST(req: NextRequest) {
       prodMap.set(p.name.toLowerCase().trim(), p);
     }
 
-    // Step 2: Batch process products
-    const productUpdates: Promise<any>[] = [];
+    // Step 2: Bulk update existing products & insert new products
+    const productsToUpdate: { id: string; rate: number; unit: string; category: string }[] = [];
     const newProducts: any[] = [];
     const processedProductNames = new Set<string>();
 
@@ -69,41 +69,48 @@ export async function POST(req: NextRequest) {
       const existing = prodMap.get(lower);
       const numRate = Number(item.rate);
       const unit = item.unit || 'Pcs';
+      const category = item.category || 'Hardware';
 
       if (existing) {
-        productUpdates.push(
-          prisma.product.update({
-            where: { id: existing.id },
-            data: {
-              rate: numRate,
-              unit: unit || existing.unit || 'Pcs',
-              category: item.category || existing.category,
-            },
-          })
-        );
+        productsToUpdate.push({
+          id: existing.id,
+          rate: numRate,
+          unit: unit || existing.unit || 'Pcs',
+          category: item.category || existing.category || 'Hardware',
+        });
       } else {
         newProducts.push({
           name: cleanName,
           rate: numRate,
           unit: unit,
-          category: item.category || 'Hardware',
+          category: category,
           sizes: item.size ? [item.size] : [],
           types: item.type ? [item.type] : [],
         });
       }
     }
 
-    // Execute product updates in parallel batches
-    if (productUpdates.length > 0) {
-      await Promise.all(productUpdates);
+    // Execute product updates in 1 single SQL query (takes <1s, uses 1 connection)
+    if (productsToUpdate.length > 0) {
+      const valuesSql = productsToUpdate
+        .map(
+          (p) =>
+            `('${p.id}', ${Number(p.rate)}, '${p.unit.replace(/'/g, "''")}', '${p.category.replace(/'/g, "''")}')`
+        )
+        .join(', ');
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Product" AS p SET rate = v.rate::float8, unit = v.unit, category = v.category FROM (VALUES ${valuesSql}) AS v(id, rate, unit, category) WHERE p.id = v.id;`
+      );
     }
+
+    // Insert new products in 1 single bulk insert
     if (newProducts.length > 0) {
       await prisma.product.createMany({ data: newProducts, skipDuplicates: true });
     }
 
-    // Step 3: Match & batch update CatalogHotspots
+    // Step 3: Match & bulk update CatalogHotspots in 1 single SQL query
     let updatedHotspotsCount = 0;
-    const hotspotUpdates: Promise<any>[] = [];
+    const hotspotsToUpdate: { id: string; price: string }[] = [];
 
     for (const hotspot of existingHotspots) {
       const hName = hotspot.name.toLowerCase().trim();
@@ -145,19 +152,19 @@ export async function POST(req: NextRequest) {
         }
 
         if (priceStr !== hotspot.price) {
-          hotspotUpdates.push(
-            prisma.catalogHotspot.update({
-              where: { id: hotspot.id },
-              data: { price: priceStr },
-            })
-          );
-          updatedHotspotsCount++;
+          hotspotsToUpdate.push({ id: hotspot.id, price: priceStr });
         }
       }
     }
 
-    if (hotspotUpdates.length > 0) {
-      await Promise.all(hotspotUpdates);
+    if (hotspotsToUpdate.length > 0) {
+      const valuesSql = hotspotsToUpdate
+        .map((h) => `('${h.id}', '${h.price.replace(/'/g, "''")}')`)
+        .join(', ');
+      await prisma.$executeRawUnsafe(
+        `UPDATE "CatalogHotspot" AS h SET price = v.price FROM (VALUES ${valuesSql}) AS v(id, price) WHERE h.id = v.id;`
+      );
+      updatedHotspotsCount = hotspotsToUpdate.length;
     }
 
     // Step 4: Revalidate caches

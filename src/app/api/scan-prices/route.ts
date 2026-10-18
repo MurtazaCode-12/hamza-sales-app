@@ -237,7 +237,7 @@ Return ONLY a valid JSON array of objects with this exact schema:
       });
     }
 
-    // --- STEP 3: Upsert into Product table with batch processing ---
+    // --- STEP 3: Upsert into Product table with single bulk SQL query ---
     const existingProducts = await prisma.product.findMany({
       select: { id: true, name: true, category: true, rate: true, unit: true },
     });
@@ -246,7 +246,7 @@ Return ONLY a valid JSON array of objects with this exact schema:
       prodMap.set(p.name.toLowerCase().trim(), p);
     }
 
-    const productUpdates: Promise<any>[] = [];
+    const productsToUpdate: { id: string; rate: number; unit: string; category: string }[] = [];
     const newProducts: any[] = [];
     const processedNames = new Set<string>();
 
@@ -260,16 +260,12 @@ Return ONLY a valid JSON array of objects with this exact schema:
 
       const existing = prodMap.get(lower);
       if (existing) {
-        productUpdates.push(
-          prisma.product.update({
-            where: { id: existing.id },
-            data: {
-              rate: numRate,
-              unit: unit || existing.unit || 'Pcs',
-              category: item.category || existing.category,
-            },
-          })
-        );
+        productsToUpdate.push({
+          id: existing.id,
+          rate: numRate,
+          unit: unit || existing.unit || 'Pcs',
+          category: item.category || existing.category || 'Hardware',
+        });
       } else {
         newProducts.push({
           name: cleanName,
@@ -282,16 +278,25 @@ Return ONLY a valid JSON array of objects with this exact schema:
       }
     }
 
-    if (productUpdates.length > 0) {
-      await Promise.all(productUpdates);
+    if (productsToUpdate.length > 0) {
+      const valuesSql = productsToUpdate
+        .map(
+          (p) =>
+            `('${p.id}', ${Number(p.rate)}, '${p.unit.replace(/'/g, "''")}', '${p.category.replace(/'/g, "''")}')`
+        )
+        .join(', ');
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Product" AS p SET rate = v.rate::float8, unit = v.unit, category = v.category FROM (VALUES ${valuesSql}) AS v(id, rate, unit, category) WHERE p.id = v.id;`
+      );
     }
+
     if (newProducts.length > 0) {
       await prisma.product.createMany({ data: newProducts, skipDuplicates: true });
     }
 
-    // --- STEP 4: Intelligently update CatalogHotspot records in parallel ---
+    // --- STEP 4: Intelligently update CatalogHotspot records with single bulk SQL query ---
     let updatedHotspotsCount = 0;
-    const hotspotUpdates: Promise<any>[] = [];
+    const hotspotsToUpdate: { id: string; price: string }[] = [];
 
     for (const hotspot of existingHotspots) {
       const hName = hotspot.name.toLowerCase().trim();
@@ -339,19 +344,19 @@ Return ONLY a valid JSON array of objects with this exact schema:
         }
 
         if (priceStr !== hotspot.price) {
-          hotspotUpdates.push(
-            prisma.catalogHotspot.update({
-              where: { id: hotspot.id },
-              data: { price: priceStr },
-            })
-          );
-          updatedHotspotsCount++;
+          hotspotsToUpdate.push({ id: hotspot.id, price: priceStr });
         }
       }
     }
 
-    if (hotspotUpdates.length > 0) {
-      await Promise.all(hotspotUpdates);
+    if (hotspotsToUpdate.length > 0) {
+      const valuesSql = hotspotsToUpdate
+        .map((h) => `('${h.id}', '${h.price.replace(/'/g, "''")}')`)
+        .join(', ');
+      await prisma.$executeRawUnsafe(
+        `UPDATE "CatalogHotspot" AS h SET price = v.price FROM (VALUES ${valuesSql}) AS v(id, price) WHERE h.id = v.id;`
+      );
+      updatedHotspotsCount = hotspotsToUpdate.length;
     }
 
     // Revalidate cached paths
