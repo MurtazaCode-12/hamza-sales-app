@@ -392,7 +392,7 @@ Return ONLY a valid JSON array of objects with this exact schema:
                     Click to browse or drop your PDF or Image price list here
                   </p>
                   <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-                    Supports wholesale PDFs, scanned pages, and photos of rate sheets. Gemini 2.5 Flash extracts all products, variants, and rates directly into Supabase.
+                    Supports wholesale PDFs, scanned pages, and photos of rate sheets. Gemini Flash AI extracts all products, variants, and rates directly into Supabase.
                   </p>
                 </div>
               )}

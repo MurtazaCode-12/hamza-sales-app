@@ -58,28 +58,39 @@ ${pdfText.slice(0, 15000)}`;
           },
         };
 
-        let geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-        let geminiRes = await fetch(geminiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestPayload),
-        });
+        const clientModels = [
+          'gemini-flash-lite-latest',
+          'gemini-3.5-flash-lite',
+          'gemini-flash-latest',
+          'gemini-3.5-flash',
+          'gemini-2.5-flash',
+        ];
 
-        if (!geminiRes.ok && (geminiRes.status === 404 || geminiRes.status === 400)) {
-          geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
-          geminiRes = await fetch(geminiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestPayload),
-          });
-        }
+        for (const model of clientModels) {
+          try {
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+            const geminiRes = await fetch(geminiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(requestPayload),
+            });
 
-        if (geminiRes.ok) {
-          const geminiData = await geminiRes.json();
-          const textResponse = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (textResponse) {
-            extractedClients = JSON.parse(textResponse);
-          }
+            if (geminiRes.ok) {
+              const geminiData = await geminiRes.json();
+              const textResponse = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (textResponse) {
+                try {
+                  extractedClients = JSON.parse(textResponse);
+                } catch {
+                  const cleaned = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+                  extractedClients = JSON.parse(cleaned);
+                }
+                if (Array.isArray(extractedClients) && extractedClients.length > 0) {
+                  break;
+                }
+              }
+            }
+          } catch {}
         }
       } catch (geminiErr) {
         console.warn('Gemini extraction failed, using heuristic regex parser:', geminiErr);

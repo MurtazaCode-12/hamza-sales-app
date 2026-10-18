@@ -167,7 +167,7 @@ export default function CatalogStudio() {
   // Call Gemini 2.5 Flash API for Object Detection & Variant Extraction
   const runGeminiDetection = async (base64Override?: string) => {
     setIsGeminiAnalyzing(true);
-    toast.info('Sending image to Gemini 2.5 Flash for product detection...', { duration: 3000 });
+    toast.info('Sending image to Gemini Flash AI for product detection...', { duration: 3000 });
 
     try {
       const base64Data = base64Override || (await getImageBase64());
@@ -217,7 +217,7 @@ export default function CatalogStudio() {
       }));
 
       setDraftHotspots(newDrafts);
-      toast.success(`✨ Gemini 2.5 Flash detected ${newDrafts.length} product(s)!`, {
+      toast.success(`✨ Gemini Flash detected ${newDrafts.length} product(s)!`, {
         description: 'Auto-extracted variants, sizes, and bounding boxes.',
       });
     } catch (err: any) {
@@ -686,7 +686,7 @@ export default function CatalogStudio() {
     if (!file) return;
 
     setIsScanningPdf(true);
-    toast.info("Scanning PDF Price List with Gemini 2.5 Flash...");
+    toast.info("Scanning PDF Price List with Gemini Flash AI...");
 
     try {
       const formData = new FormData();
@@ -1158,7 +1158,7 @@ export default function CatalogStudio() {
                       </div>
                       <div className="mt-4 text-center">
                         <h4 className="text-sm font-bold text-white tracking-wide">
-                          Gemini 2.5 Flash Analyzing Image...
+                          Gemini Flash AI Analyzing Image...
                         </h4>
                         <p className="text-xs text-slate-400 mt-1 max-w-xs">
                           Detecting distinct products, types, sizes, and computing 2D bounding boxes
@@ -1424,7 +1424,7 @@ export default function CatalogStudio() {
               </button>
             </div>
             <p className="text-xs text-slate-400 mb-4">
-              Enter your Google Gemini API key to enable 2D bounding box product detection, variant types, and sizes with Gemini 2.5 Flash. Key is saved locally in your browser.
+              Enter your Google Gemini API key to enable 2D bounding box product detection, variant types, and sizes with Gemini Flash AI. Key is saved locally in your browser.
             </p>
             <input
               type="password"

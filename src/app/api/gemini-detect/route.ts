@@ -70,39 +70,53 @@ Return ONLY a valid JSON object matching this schema:
       },
     };
 
-    // Try gemini-2.5-flash endpoint
-    let endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-    let res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestPayload),
-    });
+    // Multi-model pipeline prioritizing high-quota, ultra-fast models
+    const modelCandidates = [
+      'gemini-flash-lite-latest',
+      'gemini-3.5-flash-lite',
+      'gemini-flash-latest',
+      'gemini-3.5-flash',
+      'gemini-2.5-flash',
+    ];
 
-    // Fallback to gemini-flash-latest or gemini-1.5-flash if 2.5-flash is temporarily unavailable
-    if (!res.ok && (res.status === 404 || res.status === 400)) {
-      endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
-      res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestPayload),
-      });
+    let data: any = null;
+    let lastError: any = null;
+    let lastStatus = 500;
+
+    for (const model of modelCandidates) {
+      try {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestPayload),
+        });
+
+        if (res.ok) {
+          data = await res.json();
+          break; // Success!
+        } else {
+          lastStatus = res.status;
+          lastError = await res.text();
+          console.warn(`Gemini detect model ${model} failed with ${res.status}:`, lastError?.slice(0, 100));
+        }
+      } catch (err: any) {
+        lastError = err?.message || 'Network error';
+        console.warn(`Gemini detect model ${model} exception:`, lastError);
+      }
     }
 
-    if (!res.ok) {
-      const errorText = await res.text();
-      console.error('Gemini API Error:', res.status, errorText);
+    if (!data) {
       return NextResponse.json(
         {
           success: false,
           error: 'GEMINI_API_ERROR',
-          status: res.status,
-          message: errorText,
+          status: lastStatus,
+          message: lastError || 'All Gemini detection models failed.',
         },
-        { status: res.status }
+        { status: lastStatus }
       );
     }
-
-    const data = await res.json();
     const candidate = data.candidates?.[0];
     const textOutput = candidate?.content?.parts?.[0]?.text;
 
