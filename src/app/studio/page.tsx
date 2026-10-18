@@ -83,9 +83,7 @@ export default function CatalogStudio() {
   const [tempApiKeyInput, setTempApiKeyInput] = useState(DEFAULT_GEMINI_KEY);
 
   // PDF Price Scanner State
-  const [isScanningPdf, setIsScanningPdf] = useState(false);
   const [isPriceListModalOpen, setIsPriceListModalOpen] = useState(false);
-  const pdfFileInputRef = useRef<HTMLInputElement>(null);
 
   // Canvas Refs & Dimensions
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -680,53 +678,9 @@ export default function CatalogStudio() {
     toast.success('Gemini API key saved!');
   };
 
-  // Upload & Scan PDF Price List
-  const handlePdfPriceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsScanningPdf(true);
-    toast.info("Scanning PDF Price List with Gemini Flash AI...");
-
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      if (geminiApiKey) formData.append("apiKey", geminiApiKey);
-
-      const { ok, data } = await safeJsonFetch("/api/scan-prices", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!ok || !data?.success) {
-        throw new Error(data?.message || data?.error || "Failed to scan PDF price list");
-      }
-
-      const warningList = data?.warnings || data?.Warnings || [];
-      if (warningList.length > 0) {
-        toast.warning(
-          `Scanned ${data.scannedCount || 0} items! Updated ${data.updatedCount || 0} products in database.`,
-          { description: `${warningList.length} products flagged for review. Existing rates preserved.` }
-        );
-      } else {
-        toast.success(
-          `Scanned ${data.scannedCount || 0} items! Updated ${data.updatedCount || 0} products in database.`
-        );
-      }
-
-      // Refresh hotspots for current image if applicable
-      const currentImgId = customUploadedSrc ? customUploadedName : selectedImage;
-      if (currentImgId) {
-        const { ok: hOk, data: hData } = await safeJsonFetch(`/api/hotspots?imageId=${encodeURIComponent(currentImgId)}`);
-        if (hOk && hData?.success && hData?.hotspots) {
-          setSavedHotspots(hData.hotspots.map((h: any) => ({ ...h, isDraft: false })));
-        }
-      }
-    } catch (err: any) {
-      toast.error(err?.message || "Failed to scan PDF price list");
-    } finally {
-      setIsScanningPdf(false);
-    }
+  // Open PDF Price List Staging Modal
+  const handlePdfPriceUpload = () => {
+    setIsPriceListModalOpen(true);
   };
 
   // Active image display URL
@@ -770,14 +724,6 @@ export default function CatalogStudio() {
         onChange={handleFileUpload}
       />
 
-      {/* Hidden file input for PDF price list */}
-      <input
-        ref={pdfFileInputRef}
-        type="file"
-        accept=".pdf,application/pdf"
-        className="hidden"
-        onChange={handlePdfPriceUpload}
-      />
 
       {/* ====== TOP HEADER & TOOLBAR ====== */}
       <div className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-md border-b border-slate-800 shadow-xl">

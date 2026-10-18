@@ -3,6 +3,8 @@ import { revalidatePath } from 'next/cache';
 import prisma from '@/lib/prisma';
 import {
   normalizeProductName,
+  aggressiveNormalize,
+  aggressiveMatchProduct,
   isValidPositiveRate,
   findMatchingProduct,
   findMatchingHotspots,
@@ -12,6 +14,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 interface ExtractedPriceItem {
+  productId?: string | null;
   name: string;
   matchedCatalogName?: string | null;
   rate: number | string;
@@ -64,8 +67,15 @@ export async function POST(req: NextRequest) {
       const unit = item.unit || 'Pcs';
       const category = item.category || 'Hardware';
 
-      // 1. Case-Insensitive Match against existing products
-      const matchedProduct = findMatchingProduct(item, existingProducts);
+      // 1. Match against existing products: Check productId first, then aggressiveMatchProduct, then findMatchingProduct
+      let matchedProduct = null;
+      if (item.productId && item.productId !== '__NEW__') {
+        matchedProduct = existingProducts.find((p) => p.id === item.productId) || null;
+      }
+      if (!matchedProduct) {
+        const aggRes = aggressiveMatchProduct(rawName, existingProducts);
+        matchedProduct = aggRes?.product || findMatchingProduct(item, existingProducts);
+      }
 
       if (matchedProduct) {
         if (!hasValidRate) {

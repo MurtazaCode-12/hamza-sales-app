@@ -82,32 +82,29 @@ export async function POST(req: NextRequest) {
       sizes: h.sizes || [],
     }));
 
+    const extractOnly = formData.get('extractOnly') === 'true';
+
     const prompt = `You are an expert price-list parser for hardware, locks, hinges, building materials, and architectural fittings.
 Analyze this entire price list document thoroughly.
 Extract EVERY product, item, variant, size, packaging unit, and its wholesale price / rate.
 
 CRITICAL INSTRUCTIONS FOR PRODUCT NAMES AND PRICES:
-1. The PDF text may have spatial formatting issues. Product names (like "CYCLE LOCK") and their numeric prices (like "51.00") might appear on separate lines, have large gaps between them, or be separated by underscores/dashes. Carefully associate the correct price to the nearest preceding product name.
+1. Spatial Formatting: The PDF text may have spatial formatting issues where prices appear on a different baseline than the product name, appear on separate lines, have large horizontal gaps between them, or be separated by underscores/dashes/dots. Carefully associate each numeric price to the nearest preceding product name.
 2. Standard packaging units must be mapped to one of: "Packet", "Pcs", "Box", "Dozen", "Set" (default to "Pcs" if not stated).
-3. "rate" must be a positive number in INR (e.g. 51.00, 65, 120, 280.50). Remove currency symbols like Rs, ₹, /-, etc.
-   NEVER set a rate of 0 or 0.00 if a price or number is printed near or associated with the product name.
-4. Normalize product names to clean title case (e.g. "CYCLE LOCK" -> "Cycle Lock"), and set "matchedCatalogName" to the best matching known product from our catalog.
-5. If a product has multiple size dimensions (e.g., 25mm, 35mm, 45mm, 50mm, 60mm, 70mm, 3 inch, 4 inch), extract a separate entry for each size with its specific rate.
-6. If a product has a type/finish (e.g., ALTO, RECO, Ultra Key, Regular, Brass, Antique), extract it into "type".
+3. "extractedRate" must be a positive number in INR (e.g. 51.00, 65, 120, 280.50). Remove currency symbols like Rs, ₹, /-, etc.
+   If no price or number is found for an item, set extractedRate to 0.
+4. "extractedName" should be the product name (e.g. "CYCLE LOCK", "Pad Lock", "Brass Butt Hinges").
 
 Known products currently in our catalog:
 ${JSON.stringify(catalogContextSnippet, null, 2)}
 
-Return ONLY a valid JSON array of objects with this exact schema:
+Return ONLY a strict valid JSON array of objects with this exact schema:
 [
   {
-    "name": "Cycle Lock",
-    "matchedCatalogName": "Cycle Lock",
-    "rate": 51.0,
+    "extractedName": "CYCLE LOCK",
+    "extractedRate": 51.00,
     "unit": "Pcs",
-    "category": "Locks",
-    "size": "",
-    "type": ""
+    "category": "Locks"
   }
 ]`;
 
@@ -237,6 +234,25 @@ Return ONLY a valid JSON array of objects with this exact schema:
       } else {
         parsedItems = [];
       }
+    }
+
+    // Zero-Error Staging: If extractOnly is requested, return the extracted JSON array without updating database!
+    if (extractOnly) {
+      return NextResponse.json({
+        success: true,
+        extractedCount: parsedItems.length,
+        items: parsedItems.map((it: any) => ({
+          extractedName: (it.extractedName || it.name || '').trim(),
+          extractedRate:
+            typeof it.extractedRate === 'number'
+              ? it.extractedRate
+              : typeof it.rate === 'number'
+              ? it.rate
+              : parseFloat(it.extractedRate || it.rate) || 0,
+          unit: it.unit || 'Pcs',
+          category: it.category || 'Hardware',
+        })),
+      });
     }
 
     const warnings: string[] = [];
