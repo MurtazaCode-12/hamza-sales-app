@@ -4,6 +4,12 @@ import prisma from '@/lib/prisma';
 import { extractTextFromPdf } from '@/lib/pdfHelper';
 import { getDefaultGeminiKey } from '@/lib/geminiKey';
 import { repairAndParseJsonArray } from '@/lib/jsonRepair';
+import {
+  normalizeProductName,
+  isValidPositiveRate,
+  findMatchingProduct,
+  findMatchingHotspots,
+} from '@/lib/productMatcher';
 
 export const maxDuration = 60; // 60 seconds execution limit
 
@@ -80,12 +86,14 @@ export async function POST(req: NextRequest) {
 Analyze this entire price list document thoroughly.
 Extract EVERY product, item, variant, size, packaging unit, and its wholesale price / rate.
 
-Rules:
-1. Standard packaging units must be mapped to one of: "Packet", "Pcs", "Box", "Dozen", "Set" (default to "Pcs" if not stated).
-2. "rate" must be a positive number in INR (e.g. 65, 120, 280.50). Remove currency symbols like Rs, ₹, /-, etc.
-3. Match each item to the closest product from our catalog database if applicable.
-4. If a product has multiple size dimensions (e.g., 25mm, 35mm, 45mm, 50mm, 60mm, 70mm, 3 inch, 4 inch), extract a separate entry for each size with its specific rate.
-5. If a product has a type/finish (e.g., ALTO, RECO, Ultra Key, Regular, Brass, Antique), extract it into "type".
+CRITICAL INSTRUCTIONS FOR PRODUCT NAMES AND PRICES:
+1. The PDF text may have spatial formatting issues. Product names (like "CYCLE LOCK") and their numeric prices (like "51.00") might appear on separate lines, have large gaps between them, or be separated by underscores/dashes. Carefully associate the correct price to the nearest preceding product name.
+2. Standard packaging units must be mapped to one of: "Packet", "Pcs", "Box", "Dozen", "Set" (default to "Pcs" if not stated).
+3. "rate" must be a positive number in INR (e.g. 51.00, 65, 120, 280.50). Remove currency symbols like Rs, ₹, /-, etc.
+   NEVER set a rate of 0 or 0.00 if a price or number is printed near or associated with the product name.
+4. Normalize product names to clean title case (e.g. "CYCLE LOCK" -> "Cycle Lock"), and set "matchedCatalogName" to the best matching known product from our catalog.
+5. If a product has multiple size dimensions (e.g., 25mm, 35mm, 45mm, 50mm, 60mm, 70mm, 3 inch, 4 inch), extract a separate entry for each size with its specific rate.
+6. If a product has a type/finish (e.g., ALTO, RECO, Ultra Key, Regular, Brass, Antique), extract it into "type".
 
 Known products currently in our catalog:
 ${JSON.stringify(catalogContextSnippet, null, 2)}
@@ -93,13 +101,13 @@ ${JSON.stringify(catalogContextSnippet, null, 2)}
 Return ONLY a valid JSON array of objects with this exact schema:
 [
   {
-    "name": "Pad Lock",
-    "matchedCatalogName": "Pad Lock",
-    "rate": 65,
+    "name": "Cycle Lock",
+    "matchedCatalogName": "Cycle Lock",
+    "rate": 51.0,
     "unit": "Pcs",
     "category": "Locks",
-    "size": "25mm",
-    "type": "ALTO"
+    "size": "",
+    "type": ""
   }
 ]`;
 
@@ -231,59 +239,79 @@ Return ONLY a valid JSON array of objects with this exact schema:
       }
     }
 
-    // Filter valid items with numeric rates
-    const validItems = parsedItems.filter(
-      (it) => it && it.name && !isNaN(Number(it.rate)) && Number(it.rate) > 0
-    );
+    const warnings: string[] = [];
 
-    if (validItems.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: 'No price rates could be detected in this document. Please check the file and try again.',
-        scannedCount: 0,
-        updatedCount: 0,
-        products: [],
-      });
-    }
-
-    // --- STEP 3: Upsert into Product table with single bulk SQL query ---
+    // --- STEP 3: Upsert into Product table with Case-Insensitive Matching & 0.00 Failsafe ---
     const existingProducts = await prisma.product.findMany({
-      select: { id: true, name: true, category: true, rate: true, unit: true },
+      select: { id: true, name: true, category: true, rate: true, unit: true, sizes: true, types: true },
     });
-    const prodMap = new Map<string, any>();
-    for (const p of existingProducts) {
-      prodMap.set(p.name.toLowerCase().trim(), p);
-    }
 
     const productsToUpdate: { id: string; rate: number; unit: string; category: string }[] = [];
     const newProducts: any[] = [];
-    const processedNames = new Set<string>();
+    const processedProductIds = new Set<string>();
+    const processedNewNames = new Set<string>();
+    const successfullyMatchedItems: ExtractedPriceItem[] = [];
 
-    for (const item of validItems) {
-      const numRate = Number(item.rate);
+    for (const item of parsedItems) {
+      if (!item || !item.name || typeof item.name !== 'string') {
+        warnings.push('Skipped item with missing or invalid product name.');
+        continue;
+      }
+
+      const rawName = item.name.trim();
+      const hasValidRate = isValidPositiveRate(item.rate);
+      const numRate = hasValidRate ? Number(item.rate) : 0;
       const unit = item.unit || 'Pcs';
-      const cleanName = item.name.trim();
-      const lower = cleanName.toLowerCase();
-      if (processedNames.has(lower)) continue;
-      processedNames.add(lower);
+      const category = item.category || 'Hardware';
 
-      const existing = prodMap.get(lower);
-      if (existing) {
-        productsToUpdate.push({
-          id: existing.id,
-          rate: numRate,
-          unit: unit || existing.unit || 'Pcs',
-          category: item.category || existing.category || 'Hardware',
-        });
+      // 1. Case-Insensitive Match against existing products
+      const matchedProduct = findMatchingProduct(item, existingProducts);
+
+      if (matchedProduct) {
+        if (!hasValidRate) {
+          // Failsafe: DO NOT set rate to 0.00! Keep existing database rate
+          const existingRateDisplay = matchedProduct.rate != null ? `₹${matchedProduct.rate}` : 'unset';
+          warnings.push(
+            `Product "${matchedProduct.name}" (matched from "${rawName}"): Rate could not be parsed or was 0.00 (received: "${item.rate}"). Preserved existing rate (${existingRateDisplay}).`
+          );
+        } else {
+          // Valid positive rate -> Update
+          if (!processedProductIds.has(matchedProduct.id)) {
+            processedProductIds.add(matchedProduct.id);
+            productsToUpdate.push({
+              id: matchedProduct.id,
+              rate: numRate,
+              unit: unit || matchedProduct.unit || 'Pcs',
+              category: item.category || matchedProduct.category || 'Hardware',
+            });
+            successfullyMatchedItems.push({ ...item, rate: numRate });
+          }
+        }
       } else {
-        newProducts.push({
-          name: cleanName,
-          rate: numRate,
-          unit: unit,
-          category: item.category || 'Hardware',
-          sizes: item.size ? [item.size] : [],
-          types: item.type ? [item.type] : [],
-        });
+        // Product is not yet in the products table
+        if (!hasValidRate) {
+          // Failsafe: DO NOT insert new product with 0.00 rate!
+          warnings.push(
+            `Product "${rawName}": Not found in database and extracted rate was 0.00 or missing (received: "${item.rate}"). Skipped.`
+          );
+        } else {
+          const normKey = normalizeProductName(rawName);
+          if (!processedNewNames.has(normKey)) {
+            processedNewNames.add(normKey);
+            newProducts.push({
+              name: rawName,
+              rate: numRate,
+              unit: unit,
+              category: category,
+              sizes: item.size ? [item.size] : [],
+              types: item.type ? [item.type] : [],
+            });
+            successfullyMatchedItems.push({ ...item, rate: numRate });
+            warnings.push(
+              `Product "${rawName}": Not found in existing products table. Created as new catalog product with rate ₹${numRate}.`
+            );
+          }
+        }
       }
     }
 
@@ -303,56 +331,37 @@ Return ONLY a valid JSON array of objects with this exact schema:
       await prisma.product.createMany({ data: newProducts, skipDuplicates: true });
     }
 
-    // --- STEP 4: Intelligently update CatalogHotspot records with single bulk SQL query ---
+    // --- STEP 4: Intelligently update CatalogHotspot records case-insensitively ---
     let updatedHotspotsCount = 0;
     const hotspotsToUpdate: { id: string; price: string }[] = [];
 
     for (const hotspot of existingHotspots) {
-      const hName = hotspot.name.toLowerCase().trim();
-      const hTypes = (hotspot.types || []).map((t: string) => t.toLowerCase().trim());
-
-      // Find all extracted items that match this hotspot
-      const matches = validItems.filter((item) => {
-        const iMatched = (item.matchedCatalogName || '').toLowerCase().trim();
-        const iName = (item.name || '').toLowerCase().trim();
-
-        // Direct name match or substring match
-        const nameMatch =
-          iMatched === hName ||
-          iName === hName ||
-          iName.includes(hName) ||
-          hName.includes(iName);
-
-        if (!nameMatch) return false;
-
-        // If item specifies a finish/type and hotspot specifies types, check match
-        if (item.type && hTypes.length > 0) {
-          const iType = item.type.toLowerCase().trim();
-          return hTypes.some((ht: string) => ht.includes(iType) || iType.includes(ht));
-        }
-
-        return true;
+      // Find all successfully extracted items that match this hotspot case-insensitively
+      const matchingItems = successfullyMatchedItems.filter((item) => {
+        const matchingHotspots = findMatchingHotspots(item, [hotspot]);
+        return matchingHotspots.length > 0;
       });
 
-      if (matches.length > 0) {
+      if (matchingItems.length > 0) {
         let priceStr = '';
 
-        if (matches.length === 1 && !matches[0].size) {
+        if (matchingItems.length === 1 && !matchingItems[0].size) {
           // Single flat price
-          priceStr = String(matches[0].rate);
+          priceStr = String(matchingItems[0].rate);
         } else {
           // Variant price map
           const priceMap: Record<string, number> = {};
-          matches.forEach((m) => {
+          matchingItems.forEach((m) => {
             if (m.size) priceMap[m.size] = Number(m.rate);
             if (m.type) priceMap[m.type] = Number(m.rate);
           });
           // Default fallback rate
-          priceMap.default = Number(matches[0].rate);
+          priceMap.default = Number(matchingItems[0].rate);
           priceStr = JSON.stringify(priceMap);
         }
 
-        if (priceStr !== hotspot.price) {
+        // Failsafe: Never set price to empty string or '0'
+        if (priceStr && priceStr !== '0' && priceStr !== '0.00' && priceStr !== hotspot.price) {
           hotspotsToUpdate.push({ id: hotspot.id, price: priceStr });
         }
       }
@@ -377,9 +386,11 @@ Return ONLY a valid JSON array of objects with this exact schema:
 
     return NextResponse.json({
       success: true,
-      scannedCount: validItems.length,
-      updatedCount: updatedHotspotsCount,
-      products: validItems.map((it) => ({
+      scannedCount: parsedItems.length,
+      updatedCount: productsToUpdate.length + updatedHotspotsCount,
+      warnings: warnings,
+      Warnings: warnings, // Provided for case-insensitive client access
+      products: successfullyMatchedItems.map((it) => ({
         name: it.name,
         rate: Number(it.rate),
         unit: it.unit || 'Pcs',

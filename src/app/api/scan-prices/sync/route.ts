@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import prisma from '@/lib/prisma';
+import {
+  normalizeProductName,
+  isValidPositiveRate,
+  findMatchingProduct,
+  findMatchingHotspots,
+} from '@/lib/productMatcher';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -8,7 +14,7 @@ export const maxDuration = 60;
 interface ExtractedPriceItem {
   name: string;
   matchedCatalogName?: string | null;
-  rate: number;
+  rate: number | string;
   unit?: string;
   category?: string;
   size?: string | null;
@@ -22,22 +28,12 @@ export async function POST(req: NextRequest) {
 
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json(
-        { success: false, error: 'No price items provided to sync' },
+        { success: false, error: 'No price items provided to sync', warnings: [], Warnings: [] },
         { status: 400 }
       );
     }
 
-    // Filter valid items
-    const validItems = items.filter(
-      (it) => it && it.name && !isNaN(Number(it.rate)) && Number(it.rate) > 0
-    );
-
-    if (validItems.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'No valid products with numeric rates were found.' },
-        { status: 400 }
-      );
-    }
+    const warnings: string[] = [];
 
     // Step 1: Pre-fetch all products and hotspots in ONE parallel roundtrip
     const [existingProducts, existingHotspots] = await Promise.all([
@@ -49,48 +45,77 @@ export async function POST(req: NextRequest) {
       }),
     ]);
 
-    // Build in-memory lookup map for products
-    const prodMap = new Map<string, any>();
-    for (const p of existingProducts) {
-      prodMap.set(p.name.toLowerCase().trim(), p);
-    }
-
-    // Step 2: Bulk update existing products & insert new products
+    // Step 2: Process items with Case-Insensitive Matching and 0.00 Failsafe
     const productsToUpdate: { id: string; rate: number; unit: string; category: string }[] = [];
     const newProducts: any[] = [];
-    const processedProductNames = new Set<string>();
+    const processedProductIds = new Set<string>();
+    const processedNewNames = new Set<string>();
+    const successfullyMatchedItems: ExtractedPriceItem[] = [];
 
-    for (const item of validItems) {
-      const cleanName = item.name.trim();
-      const lower = cleanName.toLowerCase();
-      if (processedProductNames.has(lower)) continue;
-      processedProductNames.add(lower);
+    for (const item of items) {
+      if (!item || !item.name || typeof item.name !== 'string') {
+        warnings.push('Skipped item with missing or invalid product name.');
+        continue;
+      }
 
-      const existing = prodMap.get(lower);
-      const numRate = Number(item.rate);
+      const rawName = item.name.trim();
+      const hasValidRate = isValidPositiveRate(item.rate);
+      const numRate = hasValidRate ? Number(item.rate) : 0;
       const unit = item.unit || 'Pcs';
       const category = item.category || 'Hardware';
 
-      if (existing) {
-        productsToUpdate.push({
-          id: existing.id,
-          rate: numRate,
-          unit: unit || existing.unit || 'Pcs',
-          category: item.category || existing.category || 'Hardware',
-        });
+      // 1. Case-Insensitive Match against existing products
+      const matchedProduct = findMatchingProduct(item, existingProducts);
+
+      if (matchedProduct) {
+        if (!hasValidRate) {
+          // Failsafe: DO NOT set rate to 0.00! Keep existing database rate
+          const existingRateDisplay = matchedProduct.rate != null ? `₹${matchedProduct.rate}` : 'unset';
+          warnings.push(
+            `Product "${matchedProduct.name}" (matched from "${rawName}"): Rate could not be parsed or was 0.00 (received: "${item.rate}"). Preserved existing rate (${existingRateDisplay}).`
+          );
+        } else {
+          // Valid positive rate -> Update
+          if (!processedProductIds.has(matchedProduct.id)) {
+            processedProductIds.add(matchedProduct.id);
+            productsToUpdate.push({
+              id: matchedProduct.id,
+              rate: numRate,
+              unit: unit || matchedProduct.unit || 'Pcs',
+              category: item.category || matchedProduct.category || 'Hardware',
+            });
+            successfullyMatchedItems.push({ ...item, rate: numRate });
+          }
+        }
       } else {
-        newProducts.push({
-          name: cleanName,
-          rate: numRate,
-          unit: unit,
-          category: category,
-          sizes: item.size ? [item.size] : [],
-          types: item.type ? [item.type] : [],
-        });
+        // Product is not yet in the products table
+        if (!hasValidRate) {
+          // Failsafe: DO NOT insert new product with 0.00 rate!
+          warnings.push(
+            `Product "${rawName}": Not found in database and extracted rate was 0.00 or missing (received: "${item.rate}"). Skipped.`
+          );
+        } else {
+          const normKey = normalizeProductName(rawName);
+          if (!processedNewNames.has(normKey)) {
+            processedNewNames.add(normKey);
+            newProducts.push({
+              name: rawName,
+              rate: numRate,
+              unit: unit,
+              category: category,
+              sizes: item.size ? [item.size] : [],
+              types: item.type ? [item.type] : [],
+            });
+            successfullyMatchedItems.push({ ...item, rate: numRate });
+            warnings.push(
+              `Product "${rawName}": Not found in existing products table. Created as new catalog product with rate ₹${numRate}.`
+            );
+          }
+        }
       }
     }
 
-    // Execute product updates in 1 single SQL query (takes <1s, uses 1 connection)
+    // Execute product updates in 1 single SQL query (<1s)
     if (productsToUpdate.length > 0) {
       const valuesSql = productsToUpdate
         .map(
@@ -108,50 +133,33 @@ export async function POST(req: NextRequest) {
       await prisma.product.createMany({ data: newProducts, skipDuplicates: true });
     }
 
-    // Step 3: Match & bulk update CatalogHotspots in 1 single SQL query
+    // Step 3: Match & bulk update CatalogHotspots case-insensitively
     let updatedHotspotsCount = 0;
     const hotspotsToUpdate: { id: string; price: string }[] = [];
 
     for (const hotspot of existingHotspots) {
-      const hName = hotspot.name.toLowerCase().trim();
-      const hTypes = (hotspot.types || []).map((t: string) => t.toLowerCase().trim());
-
-      // Find all extracted items that match this hotspot
-      const matches = validItems.filter((item) => {
-        const iMatched = (item.matchedCatalogName || '').toLowerCase().trim();
-        const iName = (item.name || '').toLowerCase().trim();
-
-        const nameMatch =
-          iMatched === hName ||
-          iName === hName ||
-          iName.includes(hName) ||
-          hName.includes(iName);
-
-        if (!nameMatch) return false;
-
-        if (item.type && hTypes.length > 0) {
-          const iType = item.type.toLowerCase().trim();
-          return hTypes.some((ht: string) => ht.includes(iType) || iType.includes(ht));
-        }
-
-        return true;
+      // Find all successfully extracted items that match this hotspot case-insensitively
+      const matchingItems = successfullyMatchedItems.filter((item) => {
+        const matchingHotspots = findMatchingHotspots(item, [hotspot]);
+        return matchingHotspots.length > 0;
       });
 
-      if (matches.length > 0) {
+      if (matchingItems.length > 0) {
         let priceStr = '';
-        if (matches.length === 1 && !matches[0].size) {
-          priceStr = String(matches[0].rate);
+        if (matchingItems.length === 1 && !matchingItems[0].size) {
+          priceStr = String(matchingItems[0].rate);
         } else {
           const priceMap: Record<string, number> = {};
-          matches.forEach((m) => {
+          matchingItems.forEach((m) => {
             if (m.size) priceMap[m.size] = Number(m.rate);
             if (m.type) priceMap[m.type] = Number(m.rate);
           });
-          priceMap.default = Number(matches[0].rate);
+          priceMap.default = Number(matchingItems[0].rate);
           priceStr = JSON.stringify(priceMap);
         }
 
-        if (priceStr !== hotspot.price) {
+        // Failsafe: Never set price to empty string or '0'
+        if (priceStr && priceStr !== '0' && priceStr !== '0.00' && priceStr !== hotspot.price) {
           hotspotsToUpdate.push({ id: hotspot.id, price: priceStr });
         }
       }
@@ -176,9 +184,11 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      scannedCount: validItems.length,
-      updatedCount: updatedHotspotsCount,
-      products: validItems.map((it) => ({
+      scannedCount: items.length,
+      updatedCount: productsToUpdate.length + updatedHotspotsCount,
+      warnings: warnings,
+      Warnings: warnings, // Provided for case-insensitive client access
+      products: successfullyMatchedItems.map((it) => ({
         name: it.name,
         rate: Number(it.rate),
         unit: it.unit || 'Pcs',
@@ -190,7 +200,12 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     console.error('Price sync database error:', error);
     return NextResponse.json(
-      { success: false, error: error.message || 'Failed to sync prices to database' },
+      {
+        success: false,
+        error: error.message || 'Failed to sync prices to database',
+        warnings: [error.message || 'Database error occurred during sync.'],
+        Warnings: [error.message || 'Database error occurred during sync.'],
+      },
       { status: 500 }
     );
   }

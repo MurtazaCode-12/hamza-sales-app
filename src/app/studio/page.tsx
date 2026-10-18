@@ -702,9 +702,17 @@ export default function CatalogStudio() {
         throw new Error(data?.message || data?.error || "Failed to scan PDF price list");
       }
 
-      toast.success(
-        `Scanned ${data.scannedCount || 0} items! Updated ${data.updatedCount || 0} products in database.`
-      );
+      const warningList = data?.warnings || data?.Warnings || [];
+      if (warningList.length > 0) {
+        toast.warning(
+          `Scanned ${data.scannedCount || 0} items! Updated ${data.updatedCount || 0} products in database.`,
+          { description: `${warningList.length} products flagged for review. Existing rates preserved.` }
+        );
+      } else {
+        toast.success(
+          `Scanned ${data.scannedCount || 0} items! Updated ${data.updatedCount || 0} products in database.`
+        );
+      }
 
       // Refresh hotspots for current image if applicable
       const currentImgId = customUploadedSrc ? customUploadedName : selectedImage;

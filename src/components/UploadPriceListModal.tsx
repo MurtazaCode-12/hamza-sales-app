@@ -7,6 +7,7 @@ import {
   Sparkles, 
   CheckCircle2, 
   AlertCircle, 
+  AlertTriangle,
   X, 
   RotateCw,
   Tag,
@@ -40,6 +41,7 @@ export function UploadPriceListModal({ isOpen, onClose, onSuccess }: UploadPrice
     scannedCount: number;
     updatedCount: number;
     products: ScannedProduct[];
+    warnings?: string[];
   } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -146,12 +148,14 @@ export function UploadPriceListModal({ isOpen, onClose, onSuccess }: UploadPrice
 Analyze this entire price list document thoroughly.
 Extract EVERY product, item, variant, size, packaging unit, and its wholesale price / rate.
 
-Rules:
-1. Standard packaging units must be mapped to one of: "Packet", "Pcs", "Box", "Dozen", "Set" (default to "Pcs" if not stated).
-2. "rate" must be a positive number in INR (e.g. 65, 120, 280.50). Remove currency symbols like Rs, ₹, /-, etc.
-3. Match each item to the closest product from our catalog database if applicable.
-4. If a product has multiple size dimensions (e.g., 25mm, 35mm, 45mm, 50mm, 60mm, 70mm, 3 inch, 4 inch), extract a separate entry for each size with its specific rate.
-5. If a product has a type/finish (e.g., ALTO, RECO, Ultra Key, Regular, Brass, Antique), extract it into "type".
+CRITICAL INSTRUCTIONS FOR PRODUCT NAMES AND PRICES:
+1. The PDF text may have spatial formatting issues. Product names (like "CYCLE LOCK") and their numeric prices (like "51.00") might appear on separate lines, have large gaps between them, or be separated by underscores/dashes. Carefully associate the correct price to the nearest preceding product name.
+2. Standard packaging units must be mapped to one of: "Packet", "Pcs", "Box", "Dozen", "Set" (default to "Pcs" if not stated).
+3. "rate" must be a positive number in INR (e.g. 51.00, 65, 120, 280.50). Remove currency symbols like Rs, ₹, /-, etc.
+   NEVER set a rate of 0 or 0.00 if a price or number is printed near or associated with the product name.
+4. Normalize product names to clean title case (e.g. "CYCLE LOCK" -> "Cycle Lock"), and set "matchedCatalogName" to the best matching known product from our catalog.
+5. If a product has multiple size dimensions (e.g., 25mm, 35mm, 45mm, 50mm, 60mm, 70mm, 3 inch, 4 inch), extract a separate entry for each size with its specific rate.
+6. If a product has a type/finish (e.g., ALTO, RECO, Ultra Key, Regular, Brass, Antique), extract it into "type".
 
 Known products currently in our catalog:
 ${JSON.stringify(catalogContextSnippet.slice(0, 50), null, 2)}
@@ -159,13 +163,13 @@ ${JSON.stringify(catalogContextSnippet.slice(0, 50), null, 2)}
 Return ONLY a valid JSON array of objects with this exact schema:
 [
   {
-    "name": "Pad Lock",
-    "matchedCatalogName": "Pad Lock",
-    "rate": 65,
+    "name": "Cycle Lock",
+    "matchedCatalogName": "Cycle Lock",
+    "rate": 51.0,
     "unit": "Pcs",
     "category": "Locks",
-    "size": "25mm",
-    "type": "ALTO"
+    "size": "",
+    "type": ""
   }
 ]`;
 
@@ -261,16 +265,25 @@ Return ONLY a valid JSON array of objects with this exact schema:
           throw new Error(syncData.error || "Failed to sync prices to database");
         }
 
+        const warningList = syncData.warnings || syncData.Warnings || [];
         setScanResult({
           scannedCount: syncData.scannedCount || 0,
           updatedCount: syncData.updatedCount || 0,
           products: Array.isArray(syncData.products) ? syncData.products : [],
+          warnings: warningList,
         });
 
-        toast.success(
-          `Scanned ${syncData.scannedCount || 0} items! Updated ${syncData.updatedCount || 0} database records.`,
-          { description: "Product catalog and hotspot rates updated." }
-        );
+        if (warningList.length > 0) {
+          toast.warning(
+            `Scanned ${syncData.scannedCount || 0} items! Updated ${syncData.updatedCount || 0} records.`,
+            { description: `${warningList.length} products flagged for review. Existing rates preserved.` }
+          );
+        } else {
+          toast.success(
+            `Scanned ${syncData.scannedCount || 0} items! Updated ${syncData.updatedCount || 0} database records.`,
+            { description: "Product catalog and hotspot rates updated." }
+          );
+        }
 
         onSuccess?.();
         return;
@@ -308,16 +321,25 @@ Return ONLY a valid JSON array of objects with this exact schema:
         throw new Error(data.message || data.error || "Failed to scan PDF price list");
       }
 
+      const warningList = data.warnings || data.Warnings || [];
       setScanResult({
         scannedCount: data.scannedCount || 0,
         updatedCount: data.updatedCount || 0,
         products: Array.isArray(data.products) ? data.products : [],
+        warnings: warningList,
       });
 
-      toast.success(
-        `Scanned ${data.scannedCount || 0} items! Updated ${data.updatedCount || 0} database records.`,
-        { description: "Product catalog and hotspot rates updated." }
-      );
+      if (warningList.length > 0) {
+        toast.warning(
+          `Scanned ${data.scannedCount || 0} items! Updated ${data.updatedCount || 0} records.`,
+          { description: `${warningList.length} products flagged for review. Existing rates preserved.` }
+        );
+      } else {
+        toast.success(
+          `Scanned ${data.scannedCount || 0} items! Updated ${data.updatedCount || 0} database records.`,
+          { description: "Product catalog and hotspot rates updated." }
+        );
+      }
 
       onSuccess?.();
     } catch (err: any) {
@@ -473,6 +495,29 @@ Return ONLY a valid JSON array of objects with this exact schema:
                 Extracted <strong className="text-emerald-400">{scanResult.scannedCount} items</strong> from PDF. Updated <strong className="text-emerald-400">{scanResult.updatedCount} products</strong> in Supabase database.
               </p>
             </div>
+
+            {/* Warnings / Preserved Rates Card */}
+            {scanResult.warnings && scanResult.warnings.length > 0 && (
+              <div className="bg-amber-950/40 border border-amber-600/40 rounded-2xl p-4 text-left space-y-2">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={18} className="text-amber-400 shrink-0" />
+                  <span className="text-xs font-bold text-amber-300">
+                    {scanResult.warnings.length} Product Notice{scanResult.warnings.length > 1 ? 's' : ''} &amp; Preserved Rates
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  Existing rates in the database were safely kept unchanged. Review the notes below:
+                </p>
+                <div className="max-h-36 overflow-y-auto space-y-1 bg-slate-950/70 border border-amber-900/40 rounded-xl p-2.5 text-[10px] font-mono text-amber-200/90 divide-y divide-amber-900/30">
+                  {scanResult.warnings.map((w, idx) => (
+                    <div key={idx} className="pt-1 first:pt-0 flex items-start gap-1.5 leading-relaxed">
+                      <span className="text-amber-500 font-bold shrink-0">•</span>
+                      <span>{w}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Scanned Items Table Preview */}
             {scanResult.products.length > 0 && (
