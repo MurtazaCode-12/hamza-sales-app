@@ -17,17 +17,41 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const imageId = searchParams.get('imageId');
 
-    if (imageId) {
-      const hotspots = await prisma.catalogHotspot.findMany({
-        where: { imageId },
-        orderBy: { createdAt: 'asc' },
-      });
-      return NextResponse.json({ success: true, hotspots });
-    }
-
-    const hotspots = await prisma.catalogHotspot.findMany({
-      orderBy: { createdAt: 'desc' },
+    let hotspots = await prisma.catalogHotspot.findMany({
+      where: imageId ? { imageId } : undefined,
+      orderBy: imageId ? { createdAt: 'asc' } : { createdAt: 'desc' },
     });
+
+    // Enrich unpriced hotspots from Product table
+    try {
+      const products = await prisma.product.findMany({
+        where: { rate: { not: null, gt: 0 } },
+        select: { name: true, rate: true },
+      });
+      const rateMap = new Map<string, number>();
+      products.forEach((p) => {
+        if (p.name && p.rate) rateMap.set(p.name.toLowerCase().trim(), p.rate);
+      });
+
+      hotspots = hotspots.map((h) => {
+        let price = h.price;
+        if (!price || price.trim() === '' || price === '0') {
+          const hName = h.name.toLowerCase().trim();
+          let matched = rateMap.get(hName);
+          if (!matched) {
+            for (const [pName, pRate] of rateMap.entries()) {
+              if (hName.includes(pName) || pName.includes(hName)) {
+                matched = pRate;
+                break;
+              }
+            }
+          }
+          if (matched) price = String(matched);
+        }
+        return { ...h, price };
+      });
+    } catch {}
+
     return NextResponse.json({ success: true, hotspots });
   } catch (error: any) {
     console.error('Failed to get hotspots:', error);

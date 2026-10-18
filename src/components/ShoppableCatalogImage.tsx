@@ -27,6 +27,30 @@ interface ShoppableCatalogImageProps {
   onHighlightClear?: () => void;
 }
 
+function resolveRateFromPrice(priceStr?: string, size?: string, type?: string): string {
+  if (!priceStr) return "";
+
+  // Check if priceStr is a JSON variant map: e.g. {"25mm": 65, "35mm": 85, "ALTO": 65, "default": 65}
+  const trimmed = priceStr.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const map = JSON.parse(trimmed);
+      if (size && map[size] !== undefined) return String(map[size]);
+      if (type && map[type] !== undefined) return String(map[type]);
+      if (size && type && map[`${type} ${size}`] !== undefined) return String(map[`${type} ${size}`]);
+      if (map.default !== undefined) return String(map.default);
+      const firstNum = Object.values(map).find((v) => typeof v === 'number' || (!isNaN(Number(v)) && Number(v) > 0));
+      if (firstNum !== undefined) return String(firstNum);
+    } catch {
+      // fallback
+    }
+  }
+
+  // Extract first numeric sequence (e.g. ₹65.00 or 65/Pcs)
+  const match = priceStr.match(/(\d+(\.\d+)?)/);
+  return match ? match[0] : "";
+}
+
 export default function ShoppableCatalogImage({ 
   imageSrc, 
   hotspots, 
@@ -46,17 +70,30 @@ export default function ShoppableCatalogImage({
     setSelectedProduct(product);
     const validTypes = (product.types || []).filter(t => t && t.trim() !== '');
     const validSizes = (product.sizes || []).filter(s => s && s.trim() !== '');
-    setSelectedType(validTypes[0] || '');
-    setSelectedSize(validSizes[0] || '');
+    const initialType = validTypes[0] || '';
+    const initialSize = validSizes[0] || '';
+    setSelectedType(initialType);
+    setSelectedSize(initialSize);
     setQuantity(1);
     setSelectedUnit("Pcs");
 
-    // Extract numerical rate from price string if present (e.g. ₹150 or 150/Pcs)
-    if (product.price) {
-      const match = product.price.match(/(\d+(\.\d+)?)/);
-      setEditableRate(match ? match[0] : "");
-    } else {
-      setEditableRate("");
+    const initialRate = resolveRateFromPrice(product.price, initialSize, initialType);
+    setEditableRate(initialRate);
+  };
+
+  const handleSelectType = (t: string) => {
+    setSelectedType(t);
+    if (selectedProduct?.price) {
+      const newRate = resolveRateFromPrice(selectedProduct.price, selectedSize, t);
+      if (newRate) setEditableRate(newRate);
+    }
+  };
+
+  const handleSelectSize = (s: string) => {
+    setSelectedSize(s);
+    if (selectedProduct?.price) {
+      const newRate = resolveRateFromPrice(selectedProduct.price, s, selectedType);
+      if (newRate) setEditableRate(newRate);
     }
   };
 
@@ -153,9 +190,9 @@ export default function ShoppableCatalogImage({
                       {hasVariants ? 'Select options to configure this product.' : 'Ready to add to your order.'}
                     </DialogDescription>
                   </div>
-                  {showRates && selectedProduct.price && (
+                  {showRates && editableRate && (
                     <span className="shrink-0 text-base sm:text-lg font-bold font-serif text-[#4A2B1D] bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200/50">
-                      {selectedProduct.price.startsWith('₹') ? selectedProduct.price : `₹${selectedProduct.price}`}
+                      ₹{editableRate}
                     </span>
                   )}
                 </div>
@@ -173,7 +210,7 @@ export default function ShoppableCatalogImage({
                         <button
                           key={t}
                           type="button"
-                          onClick={() => setSelectedType(t)}
+                          onClick={() => handleSelectType(t)}
                           className={`px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all ${
                             selectedType === t
                               ? 'bg-[#4A2B1D] text-white border-[#4A2B1D] shadow-sm shadow-[#4A2B1D]/25'
@@ -198,7 +235,7 @@ export default function ShoppableCatalogImage({
                         <button
                           key={s}
                           type="button"
-                          onClick={() => setSelectedSize(s)}
+                          onClick={() => handleSelectSize(s)}
                           className={`px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all ${
                             selectedSize === s
                               ? 'bg-[#4A2B1D] text-white border-[#4A2B1D] shadow-sm shadow-[#4A2B1D]/25'

@@ -230,7 +230,44 @@ export async function saveMultipleHotspots(hotspotsList: any[]) {
 // 9. Get All Hotspots
 export async function getAllHotspots() {
   try {
-    return await prisma.catalogHotspot.findMany();
+    const hotspots = await prisma.catalogHotspot.findMany();
+
+    // Also fetch products to fallback rates for any unpriced hotspots
+    try {
+      const products = await prisma.product.findMany({
+        where: { rate: { not: null, gt: 0 } },
+        select: { name: true, rate: true },
+      });
+
+      const productRateMap = new Map<string, number>();
+      products.forEach((p) => {
+        if (p.name && p.rate) {
+          productRateMap.set(p.name.toLowerCase().trim(), p.rate);
+        }
+      });
+
+      return hotspots.map((h) => {
+        let price = h.price;
+        if (!price || price.trim() === '' || price === '0') {
+          const hName = h.name.toLowerCase().trim();
+          let matchedRate = productRateMap.get(hName);
+          if (!matchedRate) {
+            for (const [pName, pRate] of productRateMap.entries()) {
+              if (hName.includes(pName) || pName.includes(hName)) {
+                matchedRate = pRate;
+                break;
+              }
+            }
+          }
+          if (matchedRate) {
+            price = String(matchedRate);
+          }
+        }
+        return { ...h, price };
+      });
+    } catch {
+      return hotspots;
+    }
   } catch (error) {
     console.error("Failed to get all hotspots", error);
     return [];

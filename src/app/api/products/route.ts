@@ -96,6 +96,17 @@ export async function POST(req: NextRequest) {
           sizes: Array.isArray(sizes) ? sizes : [],
         },
       });
+
+      // Synchronize matching catalog hotspot prices
+      if (numRate !== null && numRate > 0) {
+        try {
+          await prisma.catalogHotspot.updateMany({
+            where: { name: { equals: product.name, mode: 'insensitive' } },
+            data: { price: String(numRate) },
+          });
+        } catch {}
+      }
+
       return NextResponse.json({ success: true, product });
     } catch (dbErr) {
       console.warn('Database offline, returning fallback created product:', dbErr);
@@ -150,6 +161,17 @@ export async function PUT(req: NextRequest) {
           sizes: Array.isArray(sizes) ? sizes : undefined,
         },
       });
+
+      // Synchronize matching catalog hotspot prices
+      if (numRate !== null && numRate > 0 && updated.name) {
+        try {
+          await prisma.catalogHotspot.updateMany({
+            where: { name: { equals: updated.name, mode: 'insensitive' } },
+            data: { price: String(numRate) },
+          });
+        } catch {}
+      }
+
       return NextResponse.json({ success: true, product: updated });
     } catch (dbErr) {
       return NextResponse.json({ success: true, product: body });

@@ -24,6 +24,11 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
   const [viewMode, setViewMode] = useState<"reader" | "scroll">("reader");
   const [isBumping, setIsBumping] = useState<boolean>(false);
   const [isPriceModalOpen, setIsPriceModalOpen] = useState<boolean>(false);
+  const [catalogHotspots, setCatalogHotspots] = useState<any[]>(initialHotspots);
+
+  useEffect(() => {
+    setCatalogHotspots(initialHotspots);
+  }, [initialHotspots]);
 
   // Search states
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -37,7 +42,7 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
   // Filter hotspots by search query
   const filteredHotspots = searchQuery.trim() === "" 
     ? [] 
-    : initialHotspots.filter(h => h.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    : catalogHotspots.filter(h => h.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
   const handleSearchSelect = (hotspot: any) => {
     setSearchQuery("");
@@ -67,7 +72,7 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
 
   // List of pages that have hotspots
   const pagesWithHotspots = catalogPages.filter((p) =>
-    initialHotspots.some((h) => h.imageId === p)
+    catalogHotspots.some((h) => h.imageId === p)
   );
 
   // Determine active list of pages based on filter
@@ -111,7 +116,7 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
     return filename.replace(".jpg", "");
   };
 
-  const pageHotspots = initialHotspots.filter((h) => h.imageId === displayedPage);
+  const pageHotspots = catalogHotspots.filter((h) => h.imageId === displayedPage);
 
   return (
     <div className="min-h-screen pb-32 font-sans" style={{ background: "#F7F9FB", fontFamily: "'Inter', 'Manrope', sans-serif" }}>
@@ -432,7 +437,7 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
           <div className="space-y-6">
             {activePagesList.length > 0 ? (
               activePagesList.map((page, idx) => {
-                const hotspots = initialHotspots.filter((h) => h.imageId === page);
+                const hotspots = catalogHotspots.filter((h) => h.imageId === page);
                 return (
                   <div 
                     key={page} 
@@ -497,6 +502,17 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
       <UploadPriceListModal
         isOpen={isPriceModalOpen}
         onClose={() => setIsPriceModalOpen(false)}
+        onSuccess={async () => {
+          try {
+            const res = await fetch('/api/hotspots');
+            const data = await res.json();
+            if (data.success && Array.isArray(data.hotspots)) {
+              setCatalogHotspots(data.hotspots);
+            }
+          } catch {
+            window.location.reload();
+          }
+        }}
       />
     </div>
   );

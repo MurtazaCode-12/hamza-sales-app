@@ -44,11 +44,15 @@ export function UploadPriceListModal({ isOpen, onClose, onSuccess }: UploadPrice
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const isValidFileType = (name: string) => {
+    return !!name.toLowerCase().match(/\.(pdf|png|jpe?g|webp)$/i);
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0];
     if (selected) {
-      if (!selected.name.toLowerCase().endsWith(".pdf")) {
-        toast.error("Please select a PDF document");
+      if (!isValidFileType(selected.name)) {
+        toast.error("Please select a PDF document or image file");
         return;
       }
       setFile(selected);
@@ -61,8 +65,8 @@ export function UploadPriceListModal({ isOpen, onClose, onSuccess }: UploadPrice
     e.preventDefault();
     const dropped = e.dataTransfer.files?.[0];
     if (dropped) {
-      if (!dropped.name.toLowerCase().endsWith(".pdf")) {
-        toast.error("Please drop a PDF document");
+      if (!isValidFileType(dropped.name)) {
+        toast.error("Please drop a PDF document or image file");
         return;
       }
       setFile(dropped);
@@ -73,7 +77,7 @@ export function UploadPriceListModal({ isOpen, onClose, onSuccess }: UploadPrice
 
   const handleStartScan = async () => {
     if (!file) {
-      toast.error("Please select a PDF file first");
+      toast.error("Please select a price list file first");
       return;
     }
 
@@ -179,7 +183,7 @@ export function UploadPriceListModal({ isOpen, onClose, onSuccess }: UploadPrice
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf,application/pdf"
+                accept=".pdf,application/pdf,image/png,image/jpeg,image/webp"
                 onChange={handleFileChange}
                 className="hidden"
               />
@@ -203,10 +207,10 @@ export function UploadPriceListModal({ isOpen, onClose, onSuccess }: UploadPrice
               ) : (
                 <div>
                   <p className="text-sm font-bold text-slate-200">
-                    Click to browse or drop your PDF price list here
+                    Click to browse or drop your PDF or Image price list here
                   </p>
                   <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-                    Supports hardware, locks, hinges, and rate sheets. Gemini will automatically extract names, rates, and units.
+                    Supports wholesale PDFs, scanned pages, and photos of rate sheets. Gemini 2.5 Flash extracts all products, variants, and rates directly into Supabase.
                   </p>
                 </div>
               )}
