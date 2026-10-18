@@ -1,16 +1,17 @@
 "use client";
 
-import React, { useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { useProfile } from "@/context/ProfileContext";
-import { Lock, Mail, User, ShieldCheck, ArrowRight, ArrowLeft, Sparkles } from "lucide-react";
+import { Lock, Mail, User, ShieldCheck, ArrowRight, ArrowLeft, Sparkles, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import Link from "next/link";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { selectProfile } = useProfile();
 
   const [mode, setMode] = useState<"login" | "signup">("login");
@@ -19,11 +20,29 @@ export default function LoginPage() {
   const [name, setName] = useState("");
   const [role, setRole] = useState<"user" | "admin">("user");
   const [isLoading, setIsLoading] = useState(false);
+  const [authErrorMsg, setAuthErrorMsg] = useState<string | null>(null);
+
+  // Pre-fill email from query param if available
+  useEffect(() => {
+    const queryEmail = searchParams.get("email");
+    if (queryEmail) {
+      setEmail(queryEmail);
+    }
+  }, [searchParams]);
+
+  const fillQuickAccount = (quickEmail: string, quickPass: string) => {
+    setEmail(quickEmail);
+    setPassword(quickPass);
+    setMode("login");
+    setAuthErrorMsg(null);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setAuthErrorMsg(null);
+
     if (!email || !password) {
-      toast.error("Please enter email and password");
+      toast.error("Please enter both email and password");
       return;
     }
 
@@ -32,40 +51,59 @@ export default function LoginPage() {
     try {
       if (mode === "login") {
         const { data, error } = await supabase.auth.signInWithPassword({
-          email,
+          email: email.trim().toLowerCase(),
           password,
         });
 
-        if (error) throw error;
+        if (error) {
+          throw error;
+        }
 
         const user = data.user;
-        const assignedRole = user?.user_metadata?.role || (email.includes("admin") ? "admin" : "user");
-        const displayName = user?.user_metadata?.name || email.split("@")[0] || "User";
+        if (!user) throw new Error("No user returned from Supabase Auth");
 
-        const profileObj = {
-          id: user?.id || `user_${Date.now()}`,
-          name: displayName,
-          role: assignedRole,
-          avatar: assignedRole === "admin" ? "👑" : "💼",
+        // Sync with PostgreSQL database Profile
+        const syncRes = await fetch("/api/profiles/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: user.email,
+            name: user.user_metadata?.name || email.split("@")[0],
+            role: user.user_metadata?.role || (email.includes("admin") ? "admin" : "user"),
+            avatar: user.user_metadata?.avatar,
+          }),
+        });
+
+        const syncData = await syncRes.json();
+        const activeProfile = syncData.profile || {
+          id: user.id,
+          name: user.user_metadata?.name || email.split("@")[0],
+          role: user.user_metadata?.role || "user",
+          email: user.email,
+          avatar: user.user_metadata?.role === "admin" ? "👑" : "💼",
         };
 
-        selectProfile(profileObj);
-        toast.success(`Welcome back, ${displayName}!`);
+        selectProfile(activeProfile);
+        toast.success(`Welcome back, ${activeProfile.name}!`);
 
-        if (assignedRole === "admin") {
+        const redirectUrl = searchParams.get("redirect");
+        if (redirectUrl) {
+          router.push(redirectUrl);
+        } else if (activeProfile.role === "admin") {
           router.push("/admin");
         } else {
           router.push("/dashboard");
         }
       } else {
-        // Sign Up
+        // Sign Up with Supabase Auth
         const { data, error } = await supabase.auth.signUp({
-          email,
+          email: email.trim().toLowerCase(),
           password,
           options: {
             data: {
               name: name.trim() || email.split("@")[0],
               role: role,
+              avatar: role === "admin" ? "👑" : "💼",
             },
           },
         });
@@ -73,15 +111,31 @@ export default function LoginPage() {
         if (error) throw error;
 
         const user = data.user;
-        const profileObj = {
-          id: user?.id || `user_${Date.now()}`,
+        if (!user) throw new Error("Sign up failed");
+
+        // Sync with database profile
+        const syncRes = await fetch("/api/profiles/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: user.email,
+            name: name.trim() || email.split("@")[0],
+            role: role,
+            avatar: role === "admin" ? "👑" : "💼",
+          }),
+        });
+
+        const syncData = await syncRes.json();
+        const activeProfile = syncData.profile || {
+          id: user.id,
           name: name.trim() || email.split("@")[0],
           role: role,
+          email: user.email,
           avatar: role === "admin" ? "👑" : "💼",
         };
 
-        selectProfile(profileObj);
-        toast.success("Account created successfully!");
+        selectProfile(activeProfile);
+        toast.success("Account created and verified with Supabase!");
 
         if (role === "admin") {
           router.push("/admin");
@@ -90,20 +144,13 @@ export default function LoginPage() {
         }
       }
     } catch (err: any) {
-      console.warn("Supabase Auth notice:", err.message);
-      // Seamless fallback if offline or unconfirmed email
-      const fallbackName = name.trim() || email.split("@")[0] || "Sales Rep";
-      const fallbackRole = email.includes("admin") || role === "admin" ? "admin" : "user";
-      const fallbackProfile = {
-        id: `profile_${Date.now()}`,
-        name: fallbackName,
-        role: fallbackRole,
-        avatar: fallbackRole === "admin" ? "👑" : "💼",
-      };
-
-      selectProfile(fallbackProfile);
-      toast.success(`Logged in as ${fallbackName}`);
-      router.push(fallbackRole === "admin" ? "/admin" : "/dashboard");
+      console.error("Supabase Auth error:", err);
+      const friendlyMessage =
+        err.message === "Invalid login credentials"
+          ? "Invalid email or password. Please verify your credentials."
+          : err.message || "Authentication failed. Please check your details.";
+      setAuthErrorMsg(friendlyMessage);
+      toast.error(friendlyMessage);
     } finally {
       setIsLoading(false);
     }
@@ -122,26 +169,57 @@ export default function LoginPage() {
           Hamza Trading Co.
         </h2>
         <p className="mt-1 text-center text-xs text-slate-400">
-          Supabase Authentication &amp; Profile Access
+          Secure Supabase Authentication
         </p>
       </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
+      <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md">
+        {/* Quick Demo Credentials Bar */}
+        <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3 mb-4">
+          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1">
+            <KeyRound size={12} className="text-indigo-400" /> Quick Fill Demo Accounts
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => fillQuickAccount("admin@hamzatrading.com", "HamzaAdmin@2026")}
+              className="px-2.5 py-1.5 bg-rose-950/40 hover:bg-rose-900/40 border border-rose-800/40 rounded-xl text-left transition-colors"
+            >
+              <div className="text-xs font-bold text-rose-300">👑 Hamza Admin</div>
+              <div className="text-[10px] text-slate-400 font-mono">admin@hamzatrading.com</div>
+            </button>
+            <button
+              type="button"
+              onClick={() => fillQuickAccount("ali@hamzatrading.com", "HamzaSales@2026")}
+              className="px-2.5 py-1.5 bg-indigo-950/40 hover:bg-indigo-900/40 border border-indigo-800/40 rounded-xl text-left transition-colors"
+            >
+              <div className="text-xs font-bold text-indigo-300">💼 Ali (Sales Rep)</div>
+              <div className="text-[10px] text-slate-400 font-mono">ali@hamzatrading.com</div>
+            </button>
+          </div>
+        </div>
+
         <div className="bg-slate-950 border border-slate-800 py-8 px-6 shadow-2xl rounded-3xl sm:px-10">
           {/* Tab Switcher */}
           <div className="flex bg-slate-900 p-1 rounded-xl mb-6">
             <button
               type="button"
-              onClick={() => setMode("login")}
+              onClick={() => {
+                setMode("login");
+                setAuthErrorMsg(null);
+              }}
               className={`w-1/2 py-2 text-xs font-bold rounded-lg transition-all ${
                 mode === "login" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
               }`}
             >
-              Log In
+              Sign In
             </button>
             <button
               type="button"
-              onClick={() => setMode("signup")}
+              onClick={() => {
+                setMode("signup");
+                setAuthErrorMsg(null);
+              }}
               className={`w-1/2 py-2 text-xs font-bold rounded-lg transition-all ${
                 mode === "signup" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
               }`}
@@ -149,6 +227,12 @@ export default function LoginPage() {
               Sign Up
             </button>
           </div>
+
+          {authErrorMsg && (
+            <div className="mb-4 p-3 rounded-xl bg-red-950/60 border border-red-800 text-red-200 text-xs">
+              {authErrorMsg}
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {mode === "signup" && (
@@ -175,7 +259,7 @@ export default function LoginPage() {
                 <input
                   type="email"
                   required
-                  placeholder="rep@hamzatrading.com"
+                  placeholder="admin@hamzatrading.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full pl-10 pr-4 h-11 bg-slate-900 border border-slate-800 rounded-xl text-xs font-semibold text-white placeholder:text-slate-500 focus:border-indigo-500 outline-none"
@@ -233,7 +317,7 @@ export default function LoginPage() {
               disabled={isLoading}
               className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs h-12 rounded-xl mt-4 shadow-lg shadow-indigo-600/25 flex items-center justify-center gap-2"
             >
-              {isLoading ? "Authenticating..." : mode === "login" ? "Sign In with Supabase" : "Create Account"}
+              {isLoading ? "Verifying with Supabase..." : mode === "login" ? "Sign In with Supabase" : "Create Account"}
               <ArrowRight size={15} />
             </Button>
           </form>
@@ -243,11 +327,19 @@ export default function LoginPage() {
               href="/select-profile"
               className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold"
             >
-              Or switch profiles without password →
+              Browse Profiles Directory →
             </Link>
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-900" />}>
+      <LoginForm />
+    </Suspense>
   );
 }

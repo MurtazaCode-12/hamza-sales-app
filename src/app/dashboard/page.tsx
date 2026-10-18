@@ -16,21 +16,25 @@ import {
   ShieldCheck, 
   Briefcase, 
   ExternalLink,
-  Package 
+  Package,
+  FileText,
+  LogOut
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import UploadPriceListModal from "@/components/UploadPriceListModal";
 
 export default function Dashboard() {
   const router = useRouter();
-  const { profile: activeProfile, isLoading: isProfileLoading, isAdmin, switchProfile } = useProfile();
+  const { profile: activeProfile, isLoading: isProfileLoading, isAdmin, switchProfile, signOut } = useProfile();
 
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [adminFilterScope, setAdminFilterScope] = useState<"all" | "mine">("all");
+  const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
 
   // Auth / Profile check: Redirect to /select-profile if no profile chosen
   useEffect(() => {
@@ -138,6 +142,15 @@ export default function Dashboard() {
                 </Link>
               )}
 
+              <button
+                onClick={() => setIsPriceModalOpen(true)}
+                className="p-2.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-400/30 rounded-xl transition-all active:scale-95 flex items-center gap-1.5 text-xs font-semibold"
+                title="Upload Price List (PDF)"
+              >
+                <FileText size={15} />
+                <span className="hidden sm:inline">Price List</span>
+              </button>
+
               <Link href="/products">
                 <button className="p-2.5 bg-white/10 hover:bg-white/20 text-slate-200 rounded-xl transition-all active:scale-95 flex items-center gap-1.5 text-xs font-semibold" title="Products & Rates">
                   <Package size={15} />
@@ -150,6 +163,14 @@ export default function Dashboard() {
                   <Home size={15} />
                 </button>
               </Link>
+
+              <button
+                onClick={() => signOut()}
+                className="p-2.5 bg-white/10 hover:bg-red-500/20 text-slate-300 hover:text-red-300 rounded-xl transition-all active:scale-95"
+                title="Sign Out"
+              >
+                <LogOut size={15} />
+              </button>
             </div>
           </div>
 
@@ -282,6 +303,12 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* Upload Price List Modal */}
+      <UploadPriceListModal
+        isOpen={isPriceModalOpen}
+        onClose={() => setIsPriceModalOpen(false)}
+      />
     </div>
   );
 }

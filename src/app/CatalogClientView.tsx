@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { useStore } from "@/context/StoreContext";
-import { ShoppingCart, LayoutDashboard, Layers, BookOpen, User, Sparkles, ExternalLink, ChevronLeft, ChevronRight, SlidersHorizontal, Search, X, ShieldCheck, Eye, EyeOff, Package } from "lucide-react";
+import { ShoppingCart, LayoutDashboard, Layers, BookOpen, User, Sparkles, ExternalLink, ChevronLeft, ChevronRight, SlidersHorizontal, Search, X, ShieldCheck, Eye, EyeOff, Package, FileText } from "lucide-react";
 import Link from "next/link";
 import ShoppableCatalogImage from "@/components/ShoppableCatalogImage";
 import { useProfile } from "@/context/ProfileContext";
+import UploadPriceListModal from "@/components/UploadPriceListModal";
 
 interface CatalogClientViewProps {
   initialHotspots: any[];
@@ -22,6 +23,7 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
   const [filterHasHotspots, setFilterHasHotspots] = useState<boolean>(true);
   const [viewMode, setViewMode] = useState<"reader" | "scroll">("reader");
   const [isBumping, setIsBumping] = useState<boolean>(false);
+  const [isPriceModalOpen, setIsPriceModalOpen] = useState<boolean>(false);
 
   // Search states
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -173,6 +175,13 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
                 </button>
               </Link>
             )}
+            <button 
+              onClick={() => setIsPriceModalOpen(true)}
+              className="p-2.5 rounded-xl transition-all active:scale-95 border bg-amber-50 border-amber-200 text-amber-700 shadow-sm"
+              title="Upload Price List (PDF)"
+            >
+              <FileText size={17} />
+            </button>
             <Link href="/products">
               <button 
                 className="p-2.5 rounded-xl transition-all active:scale-95 border" 
@@ -199,9 +208,18 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)", backgroundSize: "24px 24px" }} />
 
         <div className="relative p-5 pt-6">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider mb-3" style={{ background: "rgba(99,102,241,0.2)", border: "1px solid rgba(99,102,241,0.4)", color: "#A5B4FC" }}>
-            <Sparkles size={9} />
-            {catalogPages.length} Pages • Interactive
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider mb-3" style={{ background: "rgba(99,102,241,0.2)", border: "1px solid rgba(99,102,241,0.4)", color: "#A5B4FC" }}>
+              <Sparkles size={9} />
+              {catalogPages.length} Pages • Interactive
+            </div>
+            <button
+              onClick={() => setIsPriceModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold tracking-wide mb-3 bg-amber-400 hover:bg-amber-300 text-slate-950 transition-colors shadow-sm"
+            >
+              <FileText size={11} />
+              Upload Price List (PDF)
+            </button>
           </div>
           <h2 className="font-extrabold text-white leading-tight mb-1" style={{ fontSize: "1.35rem", fontFamily: "Manrope, sans-serif", letterSpacing: "-0.02em" }}>
             Shop the Catalog
@@ -474,6 +492,12 @@ export default function CatalogClientView({ initialHotspots, catalogPages }: Cat
           ))}
         </div>
       </div>
+
+      {/* Upload Price List Modal */}
+      <UploadPriceListModal
+        isOpen={isPriceModalOpen}
+        onClose={() => setIsPriceModalOpen(false)}
+      />
     </div>
   );
 }

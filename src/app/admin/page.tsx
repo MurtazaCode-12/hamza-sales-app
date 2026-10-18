@@ -18,22 +18,27 @@ import {
   Sparkles,
   X,
   AlertTriangle,
-  ArrowRight
+  ArrowRight,
+  FileText
 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
+import { UploadPriceListModal } from "@/components/UploadPriceListModal";
 
 export default function AdminPage() {
   const router = useRouter();
-  const { profile: activeProfile, isLoading, isAdmin, selectProfile, switchProfile } = useProfile();
+  const { profile: activeProfile, isLoading, isAdmin, selectProfile, switchProfile, signOut } = useProfile();
   
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loadingProfiles, setLoadingProfiles] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
 
   // Add profile modal state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newName, setNewName] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState<"user" | "admin">("user");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -80,23 +85,33 @@ export default function AdminPage() {
     }
   }, [isAdmin, loadProfiles]);
 
-  // Handle Add Profile
+  // Handle Add Profile with Supabase credentials
   const handleAddProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newName.trim()) return;
+    if (!newName.trim() || !newEmail.trim() || !newPassword.trim()) {
+      toast.error("Name, email, and password are all required");
+      return;
+    }
 
     try {
       setIsSubmitting(true);
       const res = await fetch("/api/profiles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName.trim(), role: newRole }),
+        body: JSON.stringify({ 
+          name: newName.trim(), 
+          email: newEmail.trim().toLowerCase(),
+          password: newPassword,
+          role: newRole 
+        }),
       });
       const data = await res.json();
       if (data.success) {
-        toast.success(`Profile "${data.profile.name}" added successfully!`);
+        toast.success(`Profile "${data.profile.name}" created and verified with Supabase!`);
         setIsAddModalOpen(false);
         setNewName("");
+        setNewEmail("");
+        setNewPassword("");
         setNewRole("user");
         await loadProfiles();
       } else {
@@ -206,6 +221,13 @@ export default function AdminPage() {
                 <Home size={16} />
               </button>
             </Link>
+            <button
+              onClick={signOut}
+              className="p-2.5 bg-rose-950/60 hover:bg-rose-900/80 border border-rose-800/60 text-rose-300 rounded-xl transition-all"
+              title="Sign Out of Supabase"
+            >
+              <LogOut size={16} />
+            </button>
           </div>
         </div>
       </div>
@@ -255,6 +277,14 @@ export default function AdminPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              onClick={() => setIsPriceModalOpen(true)}
+              className="px-4 py-2.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-amber-600/20 transition-all active:scale-[0.98]"
+            >
+              <FileText size={16} />
+              <span>Upload Price List (PDF)</span>
+            </button>
+
             <button
               onClick={() => setIsAddModalOpen(true)}
               className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98]"
@@ -454,6 +484,34 @@ export default function AdminPage() {
 
               <div>
                 <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
+                  Email Address *
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="e.g. murtaza@hamzatrading.com"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl p-3 text-sm text-white placeholder-slate-500 outline-none transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
+                  Password *
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl p-3 text-sm text-white placeholder-slate-500 outline-none transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
                   Permission Level
                 </label>
                 <div className="grid grid-cols-2 gap-2">
@@ -511,6 +569,13 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+
+      {/* ====== UPLOAD PRICE LIST MODAL ====== */}
+      <UploadPriceListModal
+        isOpen={isPriceModalOpen}
+        onClose={() => setIsPriceModalOpen(false)}
+        onSuccess={() => loadProfiles()}
+      />
     </div>
   );
 }

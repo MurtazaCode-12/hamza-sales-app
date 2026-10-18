@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useProfile, Profile } from "@/context/ProfileContext";
+import { supabase } from "@/lib/supabaseClient";
 import { 
   ShieldCheck, 
   User, 
@@ -14,22 +15,36 @@ import {
   RotateCw,
   ShoppingBag,
   Sparkles,
+  Lock,
+  LogOut,
+  Mail,
   X
 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 
 export default function SelectProfilePage() {
   const router = useRouter();
-  const { profile: activeProfile, selectProfile } = useProfile();
+  const { profile: activeProfile, supabaseUser, selectProfile, signOut } = useProfile();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Auth password modal state
+  const [targetAuthProfile, setTargetAuthProfile] = useState<Profile | null>(null);
+  const [authPassword, setAuthPassword] = useState("");
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  // Add Profile Modal State
   const [isAddingOpen, setIsAddingOpen] = useState(false);
   const [newName, setNewName] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState<"user" | "admin">("user");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Fetch profiles from API (auto-seeds defaults if none)
+  // Fetch profiles from API
   const fetchProfiles = async () => {
     try {
       setLoading(true);
@@ -51,25 +66,76 @@ export default function SelectProfilePage() {
   }, []);
 
   // Handle selecting a profile card
-  const handleSelect = (p: Profile) => {
-    selectProfile(p);
-    toast.success(`Active profile set to ${p.name}`, {
-      description: p.role === "admin" ? "Redirecting to Admin Dashboard..." : "Redirecting to Sales Dashboard...",
-    });
+  const handleCardClick = (p: Profile) => {
+    // If user is already authenticated with Supabase as this profile, proceed immediately
+    if (activeProfile?.id === p.id && supabaseUser?.email?.toLowerCase() === p.email?.toLowerCase()) {
+      if (p.role === "admin") {
+        router.push("/admin");
+      } else {
+        router.push("/dashboard");
+      }
+      return;
+    }
 
-    // Permission routing based on RBAC state machine
-    if (p.role === "admin") {
-      router.push("/admin");
+    // If profile has an email, prompt for password to authenticate via Supabase
+    if (p.email) {
+      setTargetAuthProfile(p);
+      setAuthPassword("");
+      setAuthError(null);
     } else {
-      router.push("/dashboard");
+      // Profile without email -> direct to login to link/authenticate
+      router.push(`/login?email=${encodeURIComponent(p.name.toLowerCase().replace(/\s+/g, '') + '@hamzatrading.com')}`);
     }
   };
 
-  // Handle creating a new profile
+  // Verify credentials with Supabase Auth
+  const handleVerifyPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!targetAuthProfile?.email || !authPassword) {
+      toast.error("Please enter password");
+      return;
+    }
+
+    setIsVerifying(true);
+    setAuthError(null);
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: targetAuthProfile.email,
+        password: authPassword,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      selectProfile(targetAuthProfile);
+      toast.success(`Authenticated as ${targetAuthProfile.name}!`);
+      setTargetAuthProfile(null);
+
+      if (targetAuthProfile.role === "admin") {
+        router.push("/admin");
+      } else {
+        router.push("/dashboard");
+      }
+    } catch (err: any) {
+      console.error("Supabase verification failed:", err);
+      const message =
+        err.message === "Invalid login credentials"
+          ? "Incorrect password. Please verify your credentials."
+          : err.message || "Authentication failed";
+      setAuthError(message);
+      toast.error(message);
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  // Handle creating a new authenticated profile
   const handleCreateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newName.trim()) {
-      toast.error("Please enter a name");
+    if (!newName.trim() || !newEmail.trim() || !newPassword.trim()) {
+      toast.error("Name, email, and password are required");
       return;
     }
 
@@ -80,18 +146,33 @@ export default function SelectProfilePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: newName.trim(),
+          email: newEmail.trim().toLowerCase(),
+          password: newPassword,
           role: newRole,
         }),
       });
+
       const data = await res.json();
       if (data.success && data.profile) {
-        toast.success(`Profile "${data.profile.name}" created!`);
+        // Authenticate with the newly created account
+        await supabase.auth.signInWithPassword({
+          email: newEmail.trim().toLowerCase(),
+          password: newPassword,
+        });
+
+        selectProfile(data.profile);
+        toast.success(`Profile "${data.profile.name}" created and authenticated!`);
         setIsAddingOpen(false);
         setNewName("");
+        setNewEmail("");
+        setNewPassword("");
         setNewRole("user");
-        await fetchProfiles();
-        // Immediately select the newly created profile
-        handleSelect(data.profile);
+
+        if (data.profile.role === "admin") {
+          router.push("/admin");
+        } else {
+          router.push("/dashboard");
+        }
       } else {
         toast.error(data.error || "Failed to create profile");
       }
@@ -112,19 +193,33 @@ export default function SelectProfilePage() {
       </div>
 
       {/* Main Container */}
-      <div className="relative z-10 max-w-2xl w-full mx-auto px-5 pt-12 pb-24">
+      <div className="relative z-10 max-w-2xl w-full mx-auto px-5 pt-10 pb-24">
         {/* Top Header */}
         <div className="text-center mb-10">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-950/70 border border-indigo-700/50 text-indigo-300 text-xs font-semibold mb-3">
-            <Sparkles size={13} className="text-indigo-400" />
-            <span>Frictionless Identity Switcher</span>
+            <ShieldCheck size={14} className="text-indigo-400" />
+            <span>Supabase Authenticated Profiles</span>
           </div>
           <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight">
             Who is using the app?
           </h1>
           <p className="text-slate-400 text-sm mt-2 max-w-md mx-auto">
-            Select your profile to load personalized catalog orders, track sales activity, and access role-based tools.
+            Select a profile to authenticate with Supabase, load personalized catalog orders, and access role-based features.
           </p>
+
+          {activeProfile && (
+            <div className="mt-4 inline-flex items-center gap-3 bg-slate-900 border border-slate-800 rounded-2xl px-4 py-2 text-xs">
+              <span className="text-slate-400">
+                Currently active: <strong className="text-white">{activeProfile.name}</strong> ({activeProfile.role})
+              </span>
+              <button
+                onClick={signOut}
+                className="text-red-400 hover:text-red-300 font-bold flex items-center gap-1 hover:underline"
+              >
+                <LogOut size={12} /> Log Out
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Profile Card List */}
@@ -147,7 +242,7 @@ export default function SelectProfilePage() {
               return (
                 <div
                   key={p.id}
-                  onClick={() => handleSelect(p)}
+                  onClick={() => handleCardClick(p)}
                   className={`group relative text-left p-5 rounded-2xl border transition-all duration-200 cursor-pointer flex flex-col justify-between ${
                     isCurrent
                       ? "bg-gradient-to-br from-indigo-950/90 to-slate-900 border-indigo-500 shadow-xl shadow-indigo-500/10 ring-2 ring-indigo-500/30"
@@ -175,9 +270,13 @@ export default function SelectProfilePage() {
                         )}
                       </span>
 
-                      {isCurrent && (
+                      {isCurrent ? (
                         <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-950/80 border border-emerald-700/50 px-2 py-0.5 rounded-full">
                           <CheckCircle2 size={12} /> Active
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-[10px] text-slate-500">
+                          <Lock size={11} /> Password
                         </span>
                       )}
                     </div>
@@ -197,9 +296,14 @@ export default function SelectProfilePage() {
                         <h3 className="text-base font-bold text-white group-hover:text-indigo-200 transition-colors">
                           {p.name}
                         </h3>
-                        <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1">
-                          <ShoppingBag size={12} className="text-slate-500" />
-                          <span>{orderCount} {orderCount === 1 ? "order" : "orders"} submitted</span>
+                        {p.email && (
+                          <p className="text-[11px] text-slate-400 font-mono truncate max-w-[170px]">
+                            {p.email}
+                          </p>
+                        )}
+                        <p className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-1">
+                          <ShoppingBag size={11} />
+                          <span>{orderCount} {orderCount === 1 ? "order" : "orders"}</span>
                         </p>
                       </div>
                     </div>
@@ -208,10 +312,10 @@ export default function SelectProfilePage() {
                   {/* Card Footer Prompt */}
                   <div className="mt-5 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs font-semibold">
                     <span className="text-slate-500 group-hover:text-slate-300 transition-colors">
-                      {isAdmin ? "Open Admin & All Orders" : "Open My Dashboard"}
+                      {isCurrent ? "Open Dashboard" : "Authenticate & Open"}
                     </span>
                     <span className="text-indigo-400 group-hover:translate-x-1 transition-transform flex items-center gap-1">
-                      Select <ArrowRight size={13} />
+                      {isCurrent ? "Open" : "Sign In"} <ArrowRight size={13} />
                     </span>
                   </div>
                 </div>
@@ -230,7 +334,7 @@ export default function SelectProfilePage() {
                 Add New Profile
               </span>
               <span className="text-xs text-slate-500 mt-0.5">
-                Register a new sales rep or admin
+                Register a new authenticated account
               </span>
             </div>
           </div>
@@ -249,15 +353,95 @@ export default function SelectProfilePage() {
             href="/login"
             className="inline-flex items-center gap-2 text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors py-2 px-4 rounded-xl bg-indigo-950/40 border border-indigo-800/60 hover:border-indigo-700"
           >
-            <ShieldCheck size={14} className="text-indigo-400" />
-            <span>Supabase Auth Login</span>
+            <Lock size={14} className="text-indigo-400" />
+            <span>Direct Supabase Sign In</span>
           </Link>
         </div>
       </div>
 
-      {/* ====== ADD PROFILE MODAL ====== */}
+      {/* ====== AUTHENTICATE PASSWORD MODAL ====== */}
+      {targetAuthProfile && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-sm rounded-2xl p-6 shadow-2xl relative animate-in zoom-in-95 duration-150">
+            <button
+              onClick={() => setTargetAuthProfile(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-11 h-11 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-xl">
+                {targetAuthProfile.avatar || (targetAuthProfile.role === "admin" ? "👑" : "💼")}
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white leading-tight">
+                  {targetAuthProfile.name}
+                </h3>
+                <p className="text-xs text-slate-400 font-mono">
+                  {targetAuthProfile.email}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 mb-4">
+              Enter the Supabase account password to switch into this profile:
+            </p>
+
+            {authError && (
+              <div className="mb-3 p-2.5 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-200 text-xs">
+                {authError}
+              </div>
+            )}
+
+            <form onSubmit={handleVerifyPassword} className="space-y-4">
+              <div className="relative">
+                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+                <input
+                  type="password"
+                  autoFocus
+                  required
+                  placeholder="Password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  className="w-full pl-10 pr-4 h-11 bg-slate-950 border border-slate-800 rounded-xl text-xs font-semibold text-white placeholder:text-slate-500 focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  type="submit"
+                  disabled={isVerifying}
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs h-10 rounded-xl"
+                >
+                  {isVerifying ? "Verifying..." : "Verify & Sign In"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setTargetAuthProfile(null)}
+                  className="flex-1 border-slate-800 bg-slate-950 text-slate-300 h-10 rounded-xl text-xs"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+
+            <div className="mt-4 pt-3 border-t border-slate-800 text-center">
+              <Link
+                href={`/login?email=${encodeURIComponent(targetAuthProfile.email || "")}`}
+                className="text-[11px] text-slate-400 hover:text-indigo-300"
+              >
+                Forgot password or need help? Open full login →
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ====== ADD NEW PROFILE MODAL ====== */}
       {isAddingOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-2xl p-6 shadow-2xl relative animate-in zoom-in-95 duration-200">
             <button
               onClick={() => setIsAddingOpen(false)}
@@ -266,9 +450,9 @@ export default function SelectProfilePage() {
               <X size={18} />
             </button>
 
-            <h3 className="text-lg font-bold text-white mb-1">Create New Profile</h3>
+            <h3 className="text-lg font-bold text-white mb-1">Create Authenticated Profile</h3>
             <p className="text-xs text-slate-400 mb-5">
-              Add a new salesperson or administrator to the app. No passwords or authentication required.
+              Add a new salesperson or administrator with verified Supabase Auth credentials.
             </p>
 
             <form onSubmit={handleCreateProfile} className="space-y-4">
@@ -283,7 +467,35 @@ export default function SelectProfilePage() {
                   placeholder="e.g. Imran (Field Rep)"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl p-3 text-sm text-white placeholder-slate-500 outline-none transition-all"
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl p-3 text-sm text-white placeholder-slate-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
+                  Email Address *
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="imran@hamzatrading.com"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl p-3 text-sm text-white placeholder-slate-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
+                  Password *
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl p-3 text-sm text-white placeholder-slate-500 outline-none"
                 />
               </div>
 
@@ -327,20 +539,21 @@ export default function SelectProfilePage() {
               </div>
 
               <div className="flex gap-2.5 pt-4 border-t border-slate-800">
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={() => setIsAddingOpen(false)}
-                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition-colors"
+                  className="flex-1 h-11 border-slate-800 bg-slate-950 text-slate-300 font-bold rounded-xl text-xs"
                 >
                   Cancel
-                </button>
-                <button
+                </Button>
+                <Button
                   type="submit"
                   disabled={isSubmitting}
-                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-indigo-600/30 transition-all disabled:opacity-50"
+                  className="flex-1 h-11 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs"
                 >
-                  {isSubmitting ? "Creating..." : "Save & Select"}
-                </button>
+                  {isSubmitting ? "Creating..." : "Create & Authenticate"}
+                </Button>
               </div>
             </form>
           </div>

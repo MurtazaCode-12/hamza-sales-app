@@ -21,12 +21,14 @@ import {
   ArrowRight,
   ArrowLeft,
   ShieldAlert,
-  FileText
+  FileText,
+  LogOut
 } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { useProfile } from '@/context/ProfileContext';
 import { getDefaultGeminiKey } from '@/lib/geminiKey';
+import UploadPriceListModal from '@/components/UploadPriceListModal';
 
 export interface StudioHotspot {
   id: string;
@@ -63,7 +65,7 @@ async function safeJsonFetch(url: string, options?: RequestInit): Promise<{ ok: 
 const DEFAULT_GEMINI_KEY = getDefaultGeminiKey();
 
 export default function CatalogStudio() {
-  const { profile: activeProfile, isAdmin, isLoading: isProfileLoading } = useProfile();
+  const { profile: activeProfile, isAdmin, isLoading: isProfileLoading, signOut } = useProfile();
 
   const [catalogPages, setCatalogPages] = useState<string[]>([]);
   const [selectedImage, setSelectedImage] = useState<string>('');
@@ -82,6 +84,7 @@ export default function CatalogStudio() {
 
   // PDF Price Scanner State
   const [isScanningPdf, setIsScanningPdf] = useState(false);
+  const [isPriceListModalOpen, setIsPriceListModalOpen] = useState(false);
   const pdfFileInputRef = useRef<HTMLInputElement>(null);
 
   // Canvas Refs & Dimensions
@@ -843,13 +846,13 @@ export default function CatalogStudio() {
             <Button
               size="sm"
               variant="outline"
-              disabled={isScanningPdf}
-              onClick={() => pdfFileInputRef.current?.click()}
-              className="border-amber-700/50 bg-amber-950/30 text-amber-300 hover:bg-amber-950/60 rounded-xl text-xs font-semibold h-9 px-3 gap-1.5 shrink-0"
+              onClick={() => setIsPriceListModalOpen(true)}
+              className="border-amber-600/60 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 rounded-xl text-xs font-semibold h-9 px-3 gap-1.5 shrink-0"
               title="Upload PDF price list to scan rates with Gemini"
             >
-              <FileText size={14} className={isScanningPdf ? 'animate-spin' : ''} />
-              <span className="hidden sm:inline">{isScanningPdf ? 'Scanning...' : 'Scan PDF Prices'}</span>
+              <FileText size={14} className="text-amber-400" />
+              <span className="hidden sm:inline">Upload Price List</span>
+              <span className="sm:hidden">Prices</span>
             </Button>
           </div>
 
@@ -903,6 +906,15 @@ export default function CatalogStudio() {
                 </Button>
               </>
             )}
+
+            {/* Log Out Button */}
+            <button
+              onClick={() => signOut()}
+              title="Log Out"
+              className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-colors border border-slate-800"
+            >
+              <LogOut size={14} />
+            </button>
 
             {/* Mobile list toggle */}
             <button
@@ -1439,6 +1451,25 @@ export default function CatalogStudio() {
           </div>
         </div>
       )}
+
+      {/* Upload Price List Modal */}
+      <UploadPriceListModal
+        isOpen={isPriceListModalOpen}
+        onClose={() => setIsPriceListModalOpen(false)}
+        onSuccess={async () => {
+          const currentImgId = customUploadedSrc ? customUploadedName : selectedImage;
+          if (currentImgId) {
+            try {
+              const { ok, data } = await safeJsonFetch(`/api/hotspots?imageId=${encodeURIComponent(currentImgId)}`);
+              if (ok && data?.success && data?.hotspots) {
+                setSavedHotspots(data.hotspots.map((h: any) => ({ ...h, isDraft: false })));
+              }
+            } catch (err) {
+              console.warn(err);
+            }
+          }
+        }}
+      />
     </div>
   );
 }

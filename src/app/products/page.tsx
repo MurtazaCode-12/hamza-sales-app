@@ -7,11 +7,13 @@ import { useStore, ALLOWED_UNITS, UnitType } from '@/context/StoreContext';
 import { 
   ArrowLeft, Plus, Search, Edit2, Trash2, Tag, Layers, 
   Package, ShoppingCart, Image as ImageIcon, ExternalLink, 
-  Check, Store, ShieldCheck, UserCheck, Eye, EyeOff, X 
+  Check, Store, ShieldCheck, UserCheck, Eye, EyeOff, X,
+  FileText, LogOut
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
+import UploadPriceListModal from '@/components/UploadPriceListModal';
 
 interface ProductItem {
   id: string;
@@ -27,13 +29,14 @@ interface ProductItem {
 }
 
 export default function ProductsPage() {
-  const { profile: activeProfile, isLoading: isProfileLoading } = useProfile();
+  const { profile: activeProfile, isLoading: isProfileLoading, signOut } = useProfile();
   const { addToCart, showRates, toggleShowRates, cart } = useStore();
 
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [isLoading, setIsLoading] = useState(true);
+  const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
 
   // Form Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -241,14 +244,34 @@ export default function ProductsPage() {
             {showRates ? <Eye size={16} /> : <EyeOff size={16} />}
           </button>
 
+          {/* Upload Price List (PDF) Button */}
+          <Button
+            onClick={() => setIsPriceModalOpen(true)}
+            size="sm"
+            className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs h-9 px-3 flex items-center gap-1.5 shadow-sm"
+          >
+            <FileText size={15} />
+            <span className="hidden sm:inline">Upload Price List</span>
+            <span className="sm:hidden">Price List</span>
+          </Button>
+
           {/* Add Product Button */}
           <Button
             onClick={handleOpenAddModal}
             size="sm"
             className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold h-9 px-3 flex items-center gap-1.5 shadow-sm"
           >
-            <Plus size={15} /> Add Product
+            <Plus size={15} /> <span className="hidden sm:inline">Add Product</span><span className="sm:hidden">Add</span>
           </Button>
+
+          {/* Sign Out Button */}
+          <button
+            onClick={() => signOut()}
+            title="Log Out"
+            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors border border-slate-200"
+          >
+            <LogOut size={16} />
+          </button>
 
           {cartCount > 0 && (
             <Link href="/cart">
@@ -523,6 +546,13 @@ export default function ProductsPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Upload Price List Modal */}
+      <UploadPriceListModal
+        isOpen={isPriceModalOpen}
+        onClose={() => setIsPriceModalOpen(false)}
+        onSuccess={fetchProducts}
+      />
     </div>
   );
 }
