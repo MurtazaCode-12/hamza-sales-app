@@ -2,6 +2,12 @@
  * Utility to retrieve Gemini API key from environment variables or default fallback.
  */
 export function getDefaultGeminiKey(): string {
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = localStorage.getItem('gemini_api_key');
+      if (saved && saved.trim().length > 10) return saved.trim();
+    } catch {}
+  }
   if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
   if (process.env.NEXT_PUBLIC_GEMINI_API_KEY) return process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 

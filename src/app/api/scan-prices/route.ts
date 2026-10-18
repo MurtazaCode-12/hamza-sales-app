@@ -3,6 +3,7 @@ import { revalidatePath } from 'next/cache';
 import prisma from '@/lib/prisma';
 import { extractTextFromPdf } from '@/lib/pdfHelper';
 import { getDefaultGeminiKey } from '@/lib/geminiKey';
+import { repairAndParseJsonArray } from '@/lib/jsonRepair';
 
 export const maxDuration = 60; // 60 seconds execution limit
 
@@ -123,41 +124,45 @@ Return ONLY a valid JSON array of objects with this exact schema:
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.1,
+        maxOutputTokens: 8192,
       },
     };
 
     const modelEndpoints = [
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${apiKey}`,
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
     ];
 
     for (const url of modelEndpoints) {
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout per model
+
         const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(multimodalPayload),
+          signal: controller.signal,
         });
+        clearTimeout(timeoutId);
 
         if (response.ok) {
           const geminiData = await response.json();
           const rawContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
           if (rawContent) {
-            try {
-              parsedItems = JSON.parse(rawContent);
-            } catch {
-              const cleaned = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
-              parsedItems = JSON.parse(cleaned);
-            }
-            if (Array.isArray(parsedItems) && parsedItems.length > 0) {
+            const items = repairAndParseJsonArray(rawContent);
+            if (Array.isArray(items) && items.length > 0) {
+              parsedItems = items;
               break; // Success!
             }
           }
         } else {
           const errText = await response.text();
           console.warn(`Gemini multimodal attempt failed at ${url.split('?')[0]}:`, response.status, errText);
+          if (response.status === 429) break;
         }
       } catch (callErr) {
         console.warn('Multimodal call error:', callErr);
@@ -182,27 +187,30 @@ Return ONLY a valid JSON array of objects with this exact schema:
             generationConfig: {
               responseMimeType: 'application/json',
               temperature: 0.1,
+              maxOutputTokens: 8192,
             },
           };
 
           for (const url of modelEndpoints) {
             try {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 8000);
+
               const response = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(textPayload),
+                signal: controller.signal,
               });
+              clearTimeout(timeoutId);
+
               if (response.ok) {
                 const data = await response.json();
                 const rawContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
                 if (rawContent) {
-                  try {
-                    parsedItems = JSON.parse(rawContent);
-                  } catch {
-                    const cleaned = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
-                    parsedItems = JSON.parse(cleaned);
-                  }
-                  if (Array.isArray(parsedItems) && parsedItems.length > 0) {
+                  const items = repairAndParseJsonArray(rawContent);
+                  if (Array.isArray(items) && items.length > 0) {
+                    parsedItems = items;
                     break;
                   }
                 }

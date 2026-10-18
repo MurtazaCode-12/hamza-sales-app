@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { getDefaultGeminiKey } from "@/lib/geminiKey";
+import { repairAndParseJsonArray } from "@/lib/jsonRepair";
 
 interface ScannedProduct {
   name: string;
@@ -170,8 +171,9 @@ Return ONLY a valid JSON array of objects with this exact schema:
 
       let parsedItems: any[] = [];
       let clientScanSuccessful = false;
+      let lastClientError = "";
 
-      // Strategy 1: Direct client-side Gemini extraction
+      // Strategy 1: Direct client-side Gemini extraction (bypasses Vercel serverless timeouts completely)
       if (apiKey) {
         setScanStep("Gemini Flash analyzing catalog & price tables...");
 
@@ -192,14 +194,16 @@ Return ONLY a valid JSON array of objects with this exact schema:
           generationConfig: {
             responseMimeType: "application/json",
             temperature: 0.1,
+            maxOutputTokens: 8192,
           },
         };
 
         const endpoints = [
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${apiKey}`,
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
         ];
 
         for (const url of endpoints) {
@@ -219,27 +223,24 @@ Return ONLY a valid JSON array of objects with this exact schema:
               const gData = await gRes.json();
               const rawText = gData.candidates?.[0]?.content?.parts?.[0]?.text;
               if (rawText) {
-                try {
-                  parsedItems = JSON.parse(rawText);
-                } catch {
-                  const cleaned = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
-                  parsedItems = JSON.parse(cleaned);
-                }
-
-                if (!Array.isArray(parsedItems) && (parsedItems as any)?.products) {
-                  parsedItems = (parsedItems as any).products;
-                }
-
-                if (Array.isArray(parsedItems) && parsedItems.length > 0) {
+                const items = repairAndParseJsonArray(rawText);
+                if (Array.isArray(items) && items.length > 0) {
+                  parsedItems = items;
                   clientScanSuccessful = true;
                   break;
                 }
               }
             } else {
               const errBody = await gRes.text();
+              lastClientError = errBody;
               console.warn(`Gemini call to ${url.split("?")[0]} returned ${gRes.status}:`, errBody);
+              // If quota or auth error, don't keep trying slower models
+              if (gRes.status === 429 || gRes.status === 401 || gRes.status === 403) {
+                break;
+              }
             }
-          } catch (endpointErr) {
+          } catch (endpointErr: any) {
+            lastClientError = endpointErr?.message || "Direct connection failed";
             console.warn("Direct client Gemini attempt failed, trying next:", endpointErr);
           }
         }
@@ -275,8 +276,18 @@ Return ONLY a valid JSON array of objects with this exact schema:
         return;
       }
 
-      // Strategy 2: Server-side scan fallback if client direct connection was blocked
-      setScanStep("Processing through server scanner...");
+      // If client scan failed due to explicit API quota or authentication, fail fast with clear message
+      if (!clientScanSuccessful && lastClientError) {
+        if (lastClientError.includes("429") || lastClientError.includes("RESOURCE_EXHAUSTED")) {
+          throw new Error("Gemini API daily free-tier quota exceeded. Please wait a short while or update your API key in Studio.");
+        }
+        if (lastClientError.includes("401") || lastClientError.includes("403") || lastClientError.includes("API_KEY_INVALID")) {
+          throw new Error("Invalid Gemini API Key. Please verify your API key in Studio.");
+        }
+      }
+
+      // Strategy 2: Server-side scan fallback if client direct connection was blocked by browser
+      setScanStep("Direct connection unavailable, scanning via server...");
       const formData = new FormData();
       formData.append("file", file);
       if (apiKey) formData.append("apiKey", apiKey);

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { extractTextFromPdf } from '@/lib/pdfHelper';
 import { getDefaultGeminiKey } from '@/lib/geminiKey';
+import { repairAndParseJsonArray } from '@/lib/jsonRepair';
 
 export async function POST(req: NextRequest) {
   try {
@@ -55,40 +56,44 @@ ${pdfText.slice(0, 15000)}`;
           generationConfig: {
             responseMimeType: 'application/json',
             temperature: 0.2,
+            maxOutputTokens: 8192,
           },
         };
 
         const clientModels = [
-          'gemini-flash-lite-latest',
           'gemini-3.5-flash-lite',
-          'gemini-flash-latest',
+          'gemini-flash-lite-latest',
+          'gemini-3.1-flash-lite',
           'gemini-3.5-flash',
-          'gemini-2.5-flash',
+          'gemini-flash-latest',
         ];
 
         for (const model of clientModels) {
           try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000);
+
             const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
             const geminiRes = await fetch(geminiUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(requestPayload),
+              signal: controller.signal,
             });
+            clearTimeout(timeoutId);
 
             if (geminiRes.ok) {
               const geminiData = await geminiRes.json();
               const textResponse = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
               if (textResponse) {
-                try {
-                  extractedClients = JSON.parse(textResponse);
-                } catch {
-                  const cleaned = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-                  extractedClients = JSON.parse(cleaned);
-                }
-                if (Array.isArray(extractedClients) && extractedClients.length > 0) {
+                const clients = repairAndParseJsonArray(textResponse);
+                if (Array.isArray(clients) && clients.length > 0) {
+                  extractedClients = clients;
                   break;
                 }
               }
+            } else if (geminiRes.status === 429) {
+              break;
             }
           } catch {}
         }

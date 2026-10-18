@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDefaultGeminiKey } from '@/lib/geminiKey';
+import { repairAndParseJsonObject } from '@/lib/jsonRepair';
 
 export async function POST(req: NextRequest) {
   try {
@@ -67,16 +68,17 @@ Return ONLY a valid JSON object matching this schema:
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.1,
+        maxOutputTokens: 8192,
       },
     };
 
     // Multi-model pipeline prioritizing high-quota, ultra-fast models
     const modelCandidates = [
-      'gemini-flash-lite-latest',
       'gemini-3.5-flash-lite',
-      'gemini-flash-latest',
+      'gemini-flash-lite-latest',
+      'gemini-3.1-flash-lite',
       'gemini-3.5-flash',
-      'gemini-2.5-flash',
+      'gemini-flash-latest',
     ];
 
     let data: any = null;
@@ -85,12 +87,17 @@ Return ONLY a valid JSON object matching this schema:
 
     for (const model of modelCandidates) {
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout per candidate
+
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestPayload),
+          signal: controller.signal,
         });
+        clearTimeout(timeoutId);
 
         if (res.ok) {
           data = await res.json();
@@ -99,6 +106,7 @@ Return ONLY a valid JSON object matching this schema:
           lastStatus = res.status;
           lastError = await res.text();
           console.warn(`Gemini detect model ${model} failed with ${res.status}:`, lastError?.slice(0, 100));
+          if (res.status === 429) break;
         }
       } catch (err: any) {
         lastError = err?.message || 'Network error';
@@ -127,14 +135,8 @@ Return ONLY a valid JSON object matching this schema:
       );
     }
 
-    // Strip optional markdown wrapper
-    const cleanJson = textOutput
-      .replace(/^```json\s*/i, '')
-      .replace(/\s*```$/i, '')
-      .trim();
-
-    const parsed = JSON.parse(cleanJson);
-    const rawProducts = parsed.products || parsed.items || [];
+    const parsed = repairAndParseJsonObject(textOutput) || {};
+    const rawProducts = parsed.products || parsed.items || (Array.isArray(parsed) ? parsed : []);
 
     // Standardize boxes to percentage coordinates
     const formattedProducts = rawProducts
