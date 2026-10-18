@@ -173,7 +173,7 @@ Return ONLY a valid JSON array of objects with this exact schema:
 
       // Strategy 1: Direct client-side Gemini extraction
       if (apiKey) {
-        setScanStep("Gemini 2.5 Flash analyzing catalog & price tables...");
+        setScanStep("Gemini Flash analyzing catalog & price tables...");
 
         const geminiPayload = {
           contents: [
@@ -196,8 +196,10 @@ Return ONLY a valid JSON array of objects with this exact schema:
         };
 
         const endpoints = [
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
         ];
 
         for (const url of endpoints) {
@@ -233,6 +235,9 @@ Return ONLY a valid JSON array of objects with this exact schema:
                   break;
                 }
               }
+            } else {
+              const errBody = await gRes.text();
+              console.warn(`Gemini call to ${url.split("?")[0]} returned ${gRes.status}:`, errBody);
             }
           } catch (endpointErr) {
             console.warn("Direct client Gemini attempt failed, trying next:", endpointErr);
@@ -334,7 +339,7 @@ Return ONLY a valid JSON array of objects with this exact schema:
               <DialogTitle className="text-lg font-bold text-white flex items-center gap-2">
                 <span>Upload PDF Price List</span>
                 <span className="text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full uppercase tracking-wider">
-                  Gemini 2.5 Flash
+                  Gemini Flash AI
                 </span>
               </DialogTitle>
               <DialogDescription className="text-xs text-slate-400">
