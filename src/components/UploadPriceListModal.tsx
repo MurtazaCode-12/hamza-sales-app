@@ -84,18 +84,176 @@ export function UploadPriceListModal({ isOpen, onClose, onSuccess }: UploadPrice
     setIsScanning(true);
     setErrorMsg(null);
     setScanResult(null);
-    setScanStep("Reading PDF text stream...");
+    setScanStep("Reading document file...");
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-
       const apiKey = getDefaultGeminiKey();
-      if (apiKey) {
-        formData.append("apiKey", apiKey);
+
+      // Read file into Base64
+      const base64Data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const res = reader.result as string;
+          const base64 = res.includes(",") ? res.split(",")[1] : res;
+          resolve(base64);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      // Determine MIME type
+      let mimeType = file.type || "application/pdf";
+      const lowerName = file.name.toLowerCase();
+      if (lowerName.endsWith(".pdf")) mimeType = "application/pdf";
+      else if (lowerName.endsWith(".png")) mimeType = "image/png";
+      else if (lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg")) mimeType = "image/jpeg";
+      else if (lowerName.endsWith(".webp")) mimeType = "image/webp";
+
+      // Fetch catalog context snippet for Gemini entity matching
+      setScanStep("Loading catalog context...");
+      let catalogContextSnippet: any[] = [];
+      try {
+        const ctxRes = await fetch("/api/hotspots/context");
+        if (ctxRes.ok) {
+          const ctxData = await ctxRes.json();
+          if (Array.isArray(ctxData?.context)) {
+            catalogContextSnippet = ctxData.context;
+          }
+        }
+      } catch (e) {
+        console.warn("Could not load catalog context:", e);
       }
 
-      setScanStep("Gemini 2.5 Flash analyzing product items & prices...");
+      const prompt = `You are an expert price-list parser for hardware, locks, hinges, building materials, and architectural fittings.
+Analyze this entire price list document thoroughly.
+Extract EVERY product, item, variant, size, packaging unit, and its wholesale price / rate.
+
+Rules:
+1. Standard packaging units must be mapped to one of: "Packet", "Pcs", "Box", "Dozen", "Set" (default to "Pcs" if not stated).
+2. "rate" must be a positive number in INR (e.g. 65, 120, 280.50). Remove currency symbols like Rs, ₹, /-, etc.
+3. Match each item to the closest product from our catalog database if applicable.
+4. If a product has multiple size dimensions (e.g., 25mm, 35mm, 45mm, 50mm, 60mm, 70mm, 3 inch, 4 inch), extract a separate entry for each size with its specific rate.
+5. If a product has a type/finish (e.g., ALTO, RECO, Ultra Key, Regular, Brass, Antique), extract it into "type".
+
+Known products currently in our catalog:
+${JSON.stringify(catalogContextSnippet.slice(0, 70), null, 2)}
+
+Return ONLY a valid JSON array of objects with this exact schema:
+[
+  {
+    "name": "Pad Lock",
+    "matchedCatalogName": "Pad Lock",
+    "rate": 65,
+    "unit": "Pcs",
+    "category": "Locks",
+    "size": "25mm",
+    "type": "ALTO"
+  }
+]`;
+
+      let parsedItems: any[] = [];
+      let clientScanSuccessful = false;
+
+      // Strategy 1: Direct client-side Gemini extraction (bypasses Vercel serverless 10s timeout)
+      if (apiKey) {
+        setScanStep("Gemini 2.5 Flash analyzing pages & price tables...");
+
+        const geminiPayload = {
+          contents: [
+            {
+              parts: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: base64Data,
+                  },
+                },
+                { text: prompt },
+              ],
+            },
+          ],
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.1,
+          },
+        };
+
+        const endpoints = [
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
+        ];
+
+        for (const url of endpoints) {
+          try {
+            const gRes = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(geminiPayload),
+            });
+
+            if (gRes.ok) {
+              const gData = await gRes.json();
+              const rawText = gData.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (rawText) {
+                try {
+                  parsedItems = JSON.parse(rawText);
+                } catch {
+                  const cleaned = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
+                  parsedItems = JSON.parse(cleaned);
+                }
+
+                if (!Array.isArray(parsedItems) && (parsedItems as any)?.products) {
+                  parsedItems = (parsedItems as any).products;
+                }
+
+                if (Array.isArray(parsedItems) && parsedItems.length > 0) {
+                  clientScanSuccessful = true;
+                  break;
+                }
+              }
+            }
+          } catch (endpointErr) {
+            console.warn("Direct client Gemini attempt failed, trying next:", endpointErr);
+          }
+        }
+      }
+
+      // If client-side Gemini extracted items, batch sync to Supabase in 1 fast call
+      if (clientScanSuccessful && Array.isArray(parsedItems) && parsedItems.length > 0) {
+        setScanStep(`Syncing ${parsedItems.length} extracted rates into Supabase...`);
+
+        const syncRes = await fetch("/api/scan-prices/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ items: parsedItems }),
+        });
+
+        const syncData = await syncRes.json();
+        if (!syncRes.ok || !syncData.success) {
+          throw new Error(syncData.error || "Failed to sync prices to database");
+        }
+
+        setScanResult({
+          scannedCount: syncData.scannedCount || 0,
+          updatedCount: syncData.updatedCount || 0,
+          products: Array.isArray(syncData.products) ? syncData.products : [],
+        });
+
+        toast.success(
+          `Scanned ${syncData.scannedCount || 0} items! Updated ${syncData.updatedCount || 0} database records.`,
+          { description: "Product catalog and hotspot rates updated." }
+        );
+
+        onSuccess?.();
+        return;
+      }
+
+      // Strategy 2: Server-side scan fallback if client direct connection was blocked
+      setScanStep("Processing through server scanner...");
+      const formData = new FormData();
+      formData.append("file", file);
+      if (apiKey) formData.append("apiKey", apiKey);
 
       const res = await fetch("/api/scan-prices", {
         method: "POST",
@@ -109,12 +267,10 @@ export function UploadPriceListModal({ isOpen, onClose, onSuccess }: UploadPrice
       }
 
       const data = await res.json();
-
       if (!res.ok || !data.success) {
         throw new Error(data.message || data.error || "Failed to scan PDF price list");
       }
 
-      setScanStep("Updating products and catalog hotspots in database...");
       setScanResult({
         scannedCount: data.scannedCount || 0,
         updatedCount: data.updatedCount || 0,

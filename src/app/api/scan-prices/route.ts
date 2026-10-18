@@ -237,48 +237,62 @@ Return ONLY a valid JSON array of objects with this exact schema:
       });
     }
 
-    // --- STEP 3: Upsert into Product table ---
-    const updatedProducts: any[] = [];
+    // --- STEP 3: Upsert into Product table with batch processing ---
+    const existingProducts = await prisma.product.findMany({
+      select: { id: true, name: true, category: true, rate: true, unit: true },
+    });
+    const prodMap = new Map<string, any>();
+    for (const p of existingProducts) {
+      prodMap.set(p.name.toLowerCase().trim(), p);
+    }
+
+    const productUpdates: Promise<any>[] = [];
+    const newProducts: any[] = [];
+    const processedNames = new Set<string>();
+
     for (const item of validItems) {
       const numRate = Number(item.rate);
       const unit = item.unit || 'Pcs';
       const cleanName = item.name.trim();
+      const lower = cleanName.toLowerCase();
+      if (processedNames.has(lower)) continue;
+      processedNames.add(lower);
 
-      try {
-        const existing = await prisma.product.findFirst({
-          where: { name: { equals: cleanName, mode: 'insensitive' } },
-        });
-
-        if (existing) {
-          const updated = await prisma.product.update({
+      const existing = prodMap.get(lower);
+      if (existing) {
+        productUpdates.push(
+          prisma.product.update({
             where: { id: existing.id },
             data: {
               rate: numRate,
-              unit: unit,
+              unit: unit || existing.unit || 'Pcs',
               category: item.category || existing.category,
             },
-          });
-          updatedProducts.push(updated);
-        } else {
-          const created = await prisma.product.create({
-            data: {
-              name: cleanName,
-              rate: numRate,
-              unit: unit,
-              category: item.category || 'Hardware',
-              sizes: item.size ? [item.size] : [],
-              types: item.type ? [item.type] : [],
-            },
-          });
-          updatedProducts.push(created);
-        }
-      } catch (dbErr) {
-        updatedProducts.push({ name: cleanName, rate: numRate, unit });
+          })
+        );
+      } else {
+        newProducts.push({
+          name: cleanName,
+          rate: numRate,
+          unit: unit,
+          category: item.category || 'Hardware',
+          sizes: item.size ? [item.size] : [],
+          types: item.type ? [item.type] : [],
+        });
       }
     }
 
-    // --- STEP 4: Intelligently update CatalogHotspot records ---
+    if (productUpdates.length > 0) {
+      await Promise.all(productUpdates);
+    }
+    if (newProducts.length > 0) {
+      await prisma.product.createMany({ data: newProducts, skipDuplicates: true });
+    }
+
+    // --- STEP 4: Intelligently update CatalogHotspot records in parallel ---
     let updatedHotspotsCount = 0;
+    const hotspotUpdates: Promise<any>[] = [];
+
     for (const hotspot of existingHotspots) {
       const hName = hotspot.name.toLowerCase().trim();
       const hTypes = (hotspot.types || []).map((t: string) => t.toLowerCase().trim());
@@ -324,16 +338,20 @@ Return ONLY a valid JSON array of objects with this exact schema:
           priceStr = JSON.stringify(priceMap);
         }
 
-        try {
-          await prisma.catalogHotspot.update({
-            where: { id: hotspot.id },
-            data: { price: priceStr },
-          });
+        if (priceStr !== hotspot.price) {
+          hotspotUpdates.push(
+            prisma.catalogHotspot.update({
+              where: { id: hotspot.id },
+              data: { price: priceStr },
+            })
+          );
           updatedHotspotsCount++;
-        } catch (updateErr) {
-          console.warn(`Failed to update hotspot ${hotspot.id}:`, updateErr);
         }
       }
+    }
+
+    if (hotspotUpdates.length > 0) {
+      await Promise.all(hotspotUpdates);
     }
 
     // Revalidate cached paths
