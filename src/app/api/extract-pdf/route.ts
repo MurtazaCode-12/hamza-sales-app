@@ -4,18 +4,151 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import prisma from '@/lib/prisma';
+import { getDefaultGeminiKey } from '@/lib/geminiKey';
+import { repairAndParseJsonArray } from '@/lib/jsonRepair';
 import {
   parseGridTablesToRows,
+  itemsToDeterministicInputRows,
   matchRowsDeterministically,
 } from '@/lib/deterministicMatcher';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
+interface PythonExtractionResult {
+  success: boolean;
+  strategy?: string;
+  productCount?: number;
+  items?: Array<{ product_name: string; variant?: string; rate: number; unit?: string }>;
+  pageImages?: string[];
+  tables?: string[][][];
+  error?: string;
+}
+
 /**
- * Executes Python pdfplumber extraction deterministically
+ * Structured Output Schema for Gemini Multimodal Fallback
  */
-async function runPythonPdfplumber(pdfBuffer: Buffer, originUrl?: string): Promise<{ success: boolean; tables: string[][][]; error?: string }> {
+const GEMINI_MULTIMODAL_SCHEMA = {
+  type: 'ARRAY',
+  description: 'Strict list of extracted products, variants, and numeric rates from the document.',
+  items: {
+    type: 'OBJECT',
+    properties: {
+      product_name: {
+        type: 'STRING',
+        description: 'Product title e.g. CYCLE LOCK, CHINA PAD LOCK, SS HINGE',
+      },
+      variant: {
+        type: 'STRING',
+        description: 'Specific size, model, finish, or type e.g. Standard, Heavy, 20mm, 50mm',
+      },
+      rate: {
+        type: 'NUMBER',
+        description: 'The exact numeric rate or price without currency symbols',
+      },
+    },
+    required: ['product_name', 'variant', 'rate'],
+  },
+};
+
+/**
+ * Fallback to Gemini 1.5/2.5 Flash using Structured Outputs when coordinate extraction yields < 3 items
+ */
+async function callGeminiMultimodalFallback(
+  pdfBuffer: Buffer,
+  pageImages: string[] | undefined,
+  clientApiKey?: string
+): Promise<Array<{ product_name: string; variant: string; rate: number }>> {
+  const apiKey = clientApiKey || getDefaultGeminiKey();
+  if (!apiKey) {
+    console.warn('No Gemini API key available for multimodal fallback');
+    return [];
+  }
+
+  const parts: any[] = [];
+
+  // If page images were rendered by Python, include them as image/jpeg
+  if (Array.isArray(pageImages) && pageImages.length > 0) {
+    for (const imgB64 of pageImages.slice(0, 5)) {
+      parts.push({
+        inlineData: {
+          mimeType: 'image/jpeg',
+          data: imgB64,
+        },
+      });
+    }
+  }
+
+  // Also include the original PDF bytes
+  parts.push({
+    inlineData: {
+      mimeType: 'application/pdf',
+      data: pdfBuffer.toString('base64'),
+    },
+  });
+
+  parts.push({
+    text: `You are an expert wholesale catalog digitizer. Read this price list and extract every product item, its variant (size, model, type, or finish), and its exact numeric rate.\nStrictly output a JSON array of objects conforming to the provided schema with keys: product_name, variant, and rate.`,
+  });
+
+  const geminiPayload = {
+    contents: [{ parts }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: GEMINI_MULTIMODAL_SCHEMA,
+      temperature: 0.1,
+      maxOutputTokens: 8192,
+    },
+  };
+
+  const modelEndpoints = [
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`,
+  ];
+
+  for (const endpointUrl of modelEndpoints) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 35000);
+
+      const res = await fetch(endpointUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(geminiPayload),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const data = await res.json();
+        const textPart = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (textPart) {
+          const parsed = repairAndParseJsonArray(textPart);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed
+              .map((it: any) => ({
+                product_name: String(it.product_name || it.name || '').trim(),
+                variant: String(it.variant || it.size || it.type || '').trim(),
+                rate: Number(it.rate || it.price) || 0,
+              }))
+              .filter((it: any) => it.product_name && it.rate > 0);
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn(`Gemini fallback error on ${endpointUrl.split('?')[0]}:`, err.message);
+    }
+  }
+
+  return [];
+}
+
+/**
+ * Executes Python coordinate & table extraction
+ */
+async function runPythonPdfplumber(pdfBuffer: Buffer, originUrl?: string): Promise<PythonExtractionResult> {
   // If running on Vercel production and the python serverless function is reachable via internal fetch
   const host =
     originUrl ||
@@ -34,8 +167,15 @@ async function runPythonPdfplumber(pdfBuffer: Buffer, originUrl?: string): Promi
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.success && Array.isArray(data.tables) && data.tables.length > 0) {
-          return { success: true, tables: data.tables };
+        if (data.success) {
+          return {
+            success: true,
+            strategy: data.strategy,
+            productCount: data.productCount,
+            items: data.items,
+            pageImages: data.pageImages,
+            tables: data.tables,
+          };
         }
       }
     } catch (e) {
@@ -85,6 +225,10 @@ async function runPythonPdfplumber(pdfBuffer: Buffer, originUrl?: string): Promi
         const parsed = JSON.parse(stdout);
         resolve({
           success: parsed.success ?? true,
+          strategy: parsed.strategy,
+          productCount: parsed.productCount,
+          items: parsed.items || [],
+          pageImages: parsed.pageImages || [],
           tables: parsed.tables || [],
           error: parsed.error,
         });
@@ -114,14 +258,30 @@ export async function POST(req: NextRequest) {
   try {
     const contentType = req.headers.get('content-type') || '';
     const originUrl = req.nextUrl.origin || (req.headers.get('host') ? `https://${req.headers.get('host')}` : undefined);
+    const clientApiKey =
+      req.headers.get('x-gemini-key') ||
+      req.nextUrl.searchParams.get('apiKey') ||
+      '';
 
     let extractedTables: string[][][] | null = null;
     let pdfBuffer: Buffer | null = null;
+    let parsedInputRows: Array<{
+      rawProduct: string;
+      rawVariant: string;
+      rawRate: number;
+      rawUnit: string;
+      tableIndex: number;
+      rowIndex: number;
+    }> = [];
+    let extractionStrategy = 'coordinate_extraction';
 
     if (contentType.includes('application/json')) {
       const body = await req.json();
       if (Array.isArray(body.tables) && body.tables.length > 0) {
         extractedTables = body.tables;
+      } else if (Array.isArray(body.items) && body.items.length > 0) {
+        parsedInputRows = itemsToDeterministicInputRows(body.items);
+        extractionStrategy = 'direct_items';
       } else {
         const b64 = body.fileBase64 || body.pdfBase64 || body.file;
         if (b64) {
@@ -143,23 +303,60 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 1. Run deterministic pdfplumber extraction if tables not pre-provided
-    if (!extractedTables) {
-      if (!pdfBuffer || pdfBuffer.length === 0) {
-        return NextResponse.json({ success: false, error: 'Empty file payload' }, { status: 400 });
-      }
+    // 1. Process Extraction
+    if (parsedInputRows.length === 0) {
+      if (extractedTables && extractedTables.length > 0) {
+        parsedInputRows = parseGridTablesToRows(extractedTables);
+        extractionStrategy = 'table_grid_direct';
+      } else {
+        if (!pdfBuffer || pdfBuffer.length === 0) {
+          return NextResponse.json({ success: false, error: 'Empty file payload' }, { status: 400 });
+        }
 
-      const extractionResult = await runPythonPdfplumber(pdfBuffer, originUrl);
-      if (!extractionResult.success || !extractionResult.tables || extractionResult.tables.length === 0) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: extractionResult.error || 'No table rows could be identified in the uploaded PDF. Please verify the document format.',
-          },
-          { status: 400 }
-        );
+        // Strategy 1 (Primary): Coordinate-Based Text Extraction
+        const pyResult = await runPythonPdfplumber(pdfBuffer, originUrl);
+
+        if (pyResult.success && Array.isArray(pyResult.items) && pyResult.items.length >= 3) {
+          parsedInputRows = itemsToDeterministicInputRows(pyResult.items);
+          extractionStrategy = 'coordinate_extraction';
+          extractedTables = pyResult.tables || [];
+        } else if (
+          pyResult.success &&
+          Array.isArray(pyResult.tables) &&
+          pyResult.tables.length > 0 &&
+          pyResult.tables[0].length >= 3
+        ) {
+          parsedInputRows = parseGridTablesToRows(pyResult.tables);
+          extractionStrategy = 'table_grid_extraction';
+          extractedTables = pyResult.tables;
+        } else {
+          // Strategy 2 (Secondary): Multimodal Fallback using Gemini Flash
+          console.log('Coordinate parsing yielded < 3 products, activating Gemini multimodal fallback...');
+          const geminiItems = await callGeminiMultimodalFallback(
+            pdfBuffer,
+            pyResult.pageImages,
+            clientApiKey
+          );
+
+          if (geminiItems.length > 0) {
+            parsedInputRows = itemsToDeterministicInputRows(geminiItems);
+            extractionStrategy = 'gemini_multimodal_fallback';
+          } else if (Array.isArray(pyResult.items) && pyResult.items.length > 0) {
+            parsedInputRows = itemsToDeterministicInputRows(pyResult.items);
+            extractionStrategy = 'coordinate_extraction_partial';
+          } else {
+            return NextResponse.json(
+              {
+                success: false,
+                error:
+                  pyResult.error ||
+                  'No products or rates could be identified in the uploaded PDF. Please verify the document format.',
+              },
+              { status: 400 }
+            );
+          }
+        }
       }
-      extractedTables = extractionResult.tables;
     }
 
     // 2. Fetch existing products and hotspots from Supabase
@@ -187,19 +384,18 @@ export async function POST(req: NextRequest) {
       }),
     ]);
 
-    // 3. Deterministically parse table grid into rows
-    const parsedRows = parseGridTablesToRows(extractedTables);
-
-    // 4. Run strict matching logic against database with aliases
+    // 3. Run strict matching logic against database with aliases
     const { allRows, matchedCount, unmatchedCount } = matchRowsDeterministically(
-      parsedRows,
+      parsedInputRows,
       dbProducts,
       dbHotspots
     );
 
     return NextResponse.json({
       success: true,
-      tables: extractedTables,
+      strategy: extractionStrategy,
+      totalExtracted: parsedInputRows.length,
+      tables: extractedTables || [],
       rows: allRows,
       matchedCount,
       unmatchedCount,

@@ -13,7 +13,9 @@ import {
   ArrowRight, 
   Database, 
   Search, 
-  Link2 
+  Link2,
+  Sparkles,
+  Trash2
 } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -36,6 +38,7 @@ export function PriceStagingModal({ isOpen, onClose, onSuccess }: PriceStagingMo
   const [dbProducts, setDbProducts] = useState<DbProductItem[]>([]);
   const [editedRates, setEditedRates] = useState<Record<string, number>>({});
   const [manualLinks, setManualLinks] = useState<Record<string, { productId: string; variantKey: string }>>({});
+  const [strategy, setStrategy] = useState<string>("");
   
   const [filterTab, setFilterTab] = useState<"all" | "matched" | "unmatched">("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -158,6 +161,7 @@ export function PriceStagingModal({ isOpen, onClose, onSuccess }: PriceStagingMo
 
       setRows(extractedRows);
       setDbProducts(productsList);
+      setStrategy(data.strategy || "coordinate_extraction");
 
       const initialRates: Record<string, number> = {};
       extractedRows.forEach((r) => {
@@ -166,7 +170,11 @@ export function PriceStagingModal({ isOpen, onClose, onSuccess }: PriceStagingMo
       setEditedRates(initialRates);
 
       setModalStage("staging");
-      toast.success(`Deterministically parsed ${extractedRows.length} table rows from PDF!`);
+      if (data.strategy === "gemini_multimodal_fallback") {
+        toast.success(`Multimodal fallback extracted ${extractedRows.length} products with Gemini Flash!`);
+      } else {
+        toast.success(`Coordinate parser extracted ${extractedRows.length} products!`);
+      }
     } catch (err: any) {
       console.error("PDF extraction error:", err);
       setErrorMsg(err.message || "Failed to extract PDF");
@@ -175,6 +183,21 @@ export function PriceStagingModal({ isOpen, onClose, onSuccess }: PriceStagingMo
     } finally {
       setProcessStep("");
     }
+  };
+
+  const handleRemoveRow = (rowId: string) => {
+    setRows((prev) => prev.filter((r) => r.id !== rowId));
+    setManualLinks((prev) => {
+      const next = { ...prev };
+      delete next[rowId];
+      return next;
+    });
+    setEditedRates((prev) => {
+      const next = { ...prev };
+      delete next[rowId];
+      return next;
+    });
+    toast.info("Row excluded from sync list");
   };
 
   const handleManualLink = (rowId: string, productId: string) => {
@@ -482,40 +505,49 @@ export function PriceStagingModal({ isOpen, onClose, onSuccess }: PriceStagingMo
               )}
 
               <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
-                <div className="flex gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800 w-full sm:w-auto">
-                  <button
-                    onClick={() => setFilterTab("all")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                      filterTab === "all"
-                        ? "bg-blue-600 text-white"
-                        : "text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    All Rows ({totalCount})
-                  </button>
-                  <button
-                    onClick={() => setFilterTab("matched")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                      filterTab === "matched"
-                        ? "bg-emerald-600 text-white"
-                        : "text-slate-400 hover:text-emerald-300"
-                    }`}
-                  >
-                    Matched ({matchedCount})
-                  </button>
-                  <button
-                    onClick={() => setFilterTab("unmatched")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
-                      filterTab === "unmatched"
-                        ? "bg-red-600 text-white"
-                        : unlinkedCount > 0 ? "text-red-400 hover:text-red-300" : "text-slate-400"
-                    }`}
-                  >
-                    Unmatched ({unlinkedCount})
-                    {unlinkedCount > 0 && (
-                      <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
-                    )}
-                  </button>
+                <div className="flex flex-wrap gap-1.5 items-center">
+                  <div className="flex gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800 w-full sm:w-auto">
+                    <button
+                      onClick={() => setFilterTab("all")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                        filterTab === "all"
+                          ? "bg-blue-600 text-white"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      All Rows ({totalCount})
+                    </button>
+                    <button
+                      onClick={() => setFilterTab("matched")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                        filterTab === "matched"
+                          ? "bg-emerald-600 text-white"
+                          : "text-slate-400 hover:text-emerald-300"
+                      }`}
+                    >
+                      Matched ({matchedCount})
+                    </button>
+                    <button
+                      onClick={() => setFilterTab("unmatched")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                        filterTab === "unmatched"
+                          ? "bg-red-600 text-white"
+                          : unlinkedCount > 0 ? "text-red-400 hover:text-red-300" : "text-slate-400"
+                      }`}
+                    >
+                      Unmatched ({unlinkedCount})
+                      {unlinkedCount > 0 && (
+                        <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
+                      )}
+                    </button>
+                  </div>
+
+                  {strategy && (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-300 text-[11px] font-medium">
+                      <Sparkles size={12} className="text-blue-400" />
+                      <span>{strategy === "gemini_multimodal_fallback" ? "Gemini Multimodal Fallback" : "Coordinate-Based Parser"}</span>
+                    </span>
+                  )}
                 </div>
 
                 <div className="relative w-full sm:w-64">
@@ -543,11 +575,11 @@ export function PriceStagingModal({ isOpen, onClose, onSuccess }: PriceStagingMo
                   <table className="w-full text-left text-xs border-collapse">
                     <thead className="bg-slate-900 text-slate-400 sticky top-0 z-10 border-b border-slate-800">
                       <tr>
-                        <th className="py-2.5 px-3 font-semibold">Status</th>
-                        <th className="py-2.5 px-3 font-semibold">Extracted Product</th>
-                        <th className="py-2.5 px-3 font-semibold">Variant / Size</th>
-                        <th className="py-2.5 px-3 font-semibold w-28">Rate (₹)</th>
-                        <th className="py-2.5 px-3 font-semibold">Matched DB Product & Variant</th>
+                        <th className="py-2.5 px-3 font-semibold">Extracted Name</th>
+                        <th className="py-2.5 px-3 font-semibold w-28">Variant</th>
+                        <th className="py-2.5 px-3 font-semibold w-28">Detected Rate</th>
+                        <th className="py-2.5 px-3 font-semibold">Supabase Match</th>
+                        <th className="py-2.5 px-3 font-semibold w-56 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60">
@@ -575,28 +607,29 @@ export function PriceStagingModal({ isOpen, onClose, onSuccess }: PriceStagingMo
                                   : "hover:bg-slate-800/40"
                               }`}
                             >
-                              <td className="py-2.5 px-3 whitespace-nowrap">
-                                {isUnmatched ? (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 font-bold border border-red-500/40 text-[10px]">
-                                    <AlertCircle size={10} /> Unmatched
-                                  </span>
-                                ) : isLinked ? (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40 text-[10px]">
-                                    <Link2 size={10} /> Manually Linked
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30 text-[10px]">
-                                    <Check size={10} /> Matched
-                                  </span>
-                                )}
-                              </td>
-
+                              {/* 1. Extracted Name */}
                               <td className="py-2.5 px-3">
-                                <span className={`font-semibold ${isUnmatched ? "text-red-200 font-bold" : "text-white"}`}>
-                                  {row.rawProduct}
-                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span className={`font-semibold ${isUnmatched ? "text-red-200 font-bold" : "text-white"}`}>
+                                    {row.rawProduct}
+                                  </span>
+                                  {isUnmatched ? (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full bg-red-500/20 text-red-300 font-bold border border-red-500/40 text-[9px]">
+                                      Unmatched
+                                    </span>
+                                  ) : isLinked ? (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40 text-[9px]">
+                                      Linked
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30 text-[9px]">
+                                      Matched
+                                    </span>
+                                  )}
+                                </div>
                               </td>
 
+                              {/* 2. Variant */}
                               <td className="py-2.5 px-3 text-slate-300">
                                 {row.rawVariant ? (
                                   <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[11px]">
@@ -607,6 +640,7 @@ export function PriceStagingModal({ isOpen, onClose, onSuccess }: PriceStagingMo
                                 )}
                               </td>
 
+                              {/* 3. Detected Rate */}
                               <td className="py-2.5 px-3">
                                 <div className="flex items-center gap-1">
                                   <span className="text-slate-500 text-xs">₹</span>
@@ -623,16 +657,61 @@ export function PriceStagingModal({ isOpen, onClose, onSuccess }: PriceStagingMo
                                 </div>
                               </td>
 
+                              {/* 4. Supabase Match */}
                               <td className="py-2.5 px-3">
                                 {isUnmatched ? (
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-1.5 text-red-400">
+                                    <AlertCircle size={13} className="shrink-0" />
+                                    <span className="font-semibold text-xs">Unmatched Product</span>
+                                  </div>
+                                ) : isLinked ? (
+                                  <div className="flex flex-col gap-0.5">
+                                    <div className="flex items-center gap-1.5">
+                                      <Link2 size={13} className="text-amber-400 shrink-0" />
+                                      <span className="text-amber-200 font-medium">
+                                        {dbProducts.find((p) => p.id === manual?.productId)?.name}
+                                      </span>
+                                      {manual?.variantKey && (
+                                        <span className="text-amber-400/80 text-[11px]">
+                                          ({manual.variantKey})
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className="text-amber-400/70 text-[10px]">Manually linked by admin</span>
+                                  </div>
+                                ) : (
+                                  <div className="flex flex-col gap-0.5">
+                                    <div className="flex items-center gap-1.5">
+                                      <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+                                      <span className="text-white font-medium">
+                                        {row.matchedProductName}
+                                      </span>
+                                      {row.matchedVariantKey && (
+                                        <span className="text-slate-400 text-[11px]">
+                                          ({row.matchedVariantKey})
+                                        </span>
+                                      )}
+                                    </div>
+                                    {row.currentRate != null && (
+                                      <span className="text-slate-500 text-[10px] font-mono">
+                                        Current Catalog Rate: ₹{row.currentRate}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* 5. Actions */}
+                              <td className="py-2.5 px-3 text-right">
+                                {isUnmatched ? (
+                                  <div className="flex items-center justify-end gap-2">
                                     <select
                                       defaultValue=""
                                       onChange={(e) => handleManualLink(row.id, e.target.value)}
-                                      className="bg-red-950/80 border border-red-500/60 text-red-200 rounded-lg px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-red-400 max-w-[220px]"
+                                      className="bg-red-950/80 border border-red-500/60 text-red-200 rounded-lg px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-red-400 max-w-[190px]"
                                     >
                                       <option value="" disabled>
-                                        Select DB Product to Link...
+                                        Link DB Product...
                                       </option>
                                       {dbProducts.map((p) => (
                                         <option key={p.id} value={p.id} className="bg-slate-900 text-white">
@@ -640,13 +719,16 @@ export function PriceStagingModal({ isOpen, onClose, onSuccess }: PriceStagingMo
                                         </option>
                                       ))}
                                     </select>
-                                    <span className="text-[10px] text-red-400 font-mono">Action required</span>
+                                    <button
+                                      onClick={() => handleRemoveRow(row.id)}
+                                      className="text-slate-500 hover:text-red-400 p-1 rounded transition"
+                                      title="Exclude row"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
                                   </div>
                                 ) : isLinked ? (
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-amber-200 font-medium">
-                                      {dbProducts.find((p) => p.id === manual?.productId)?.name}
-                                    </span>
+                                  <div className="flex items-center justify-end gap-2">
                                     {(() => {
                                       const p = dbProducts.find((it) => it.id === manual?.productId);
                                       const variants = [...(p?.types || []), ...(p?.sizes || [])];
@@ -669,27 +751,42 @@ export function PriceStagingModal({ isOpen, onClose, onSuccess }: PriceStagingMo
                                     })()}
                                     <button
                                       onClick={() => handleManualLink(row.id, "")}
-                                      className="text-slate-500 hover:text-red-400 p-0.5"
+                                      className="text-slate-400 hover:text-red-300 text-[11px] underline"
                                       title="Unlink"
                                     >
-                                      <X size={12} />
+                                      Unlink
+                                    </button>
+                                    <button
+                                      onClick={() => handleRemoveRow(row.id)}
+                                      className="text-slate-500 hover:text-red-400 p-1 rounded transition"
+                                      title="Exclude row"
+                                    >
+                                      <Trash2 size={13} />
                                     </button>
                                   </div>
                                 ) : (
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-white font-medium">
-                                      {row.matchedProductName}
-                                    </span>
-                                    {row.matchedVariantKey && (
-                                      <span className="text-slate-400 text-[11px]">
-                                        ({row.matchedVariantKey})
-                                      </span>
-                                    )}
-                                    {row.currentRate != null && (
-                                      <span className="text-slate-500 text-[10px] font-mono">
-                                        (Current: ₹{row.currentRate})
-                                      </span>
-                                    )}
+                                  <div className="flex items-center justify-end gap-2">
+                                    <select
+                                      value=""
+                                      onChange={(e) => handleManualLink(row.id, e.target.value)}
+                                      className="bg-slate-950 border border-slate-800 text-slate-400 hover:text-white rounded px-2 py-0.5 text-[11px] outline-none max-w-[120px]"
+                                    >
+                                      <option value="" disabled>
+                                        Change Link...
+                                      </option>
+                                      {dbProducts.map((p) => (
+                                        <option key={p.id} value={p.id} className="bg-slate-900 text-white">
+                                          {p.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <button
+                                      onClick={() => handleRemoveRow(row.id)}
+                                      className="text-slate-600 hover:text-red-400 p-1 rounded transition"
+                                      title="Exclude row"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
                                   </div>
                                 )}
                               </td>
@@ -731,7 +828,7 @@ export function PriceStagingModal({ isOpen, onClose, onSuccess }: PriceStagingMo
                     ) : (
                       <>
                         <Database size={14} />
-                        Sync Database ({matchedCount} Items)
+                        Approve & Sync to Supabase ({matchedCount} Items)
                       </>
                     )}
                   </Button>

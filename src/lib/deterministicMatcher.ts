@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Deterministic Table Extractor & Exact Matcher
  * Uses strict string normalization, alias matching, and catalog hotspot resolution.
  */
@@ -326,4 +326,28 @@ export function matchRowsDeterministically(
   });
 
   return { allRows, matchedCount, unmatchedCount };
+}
+
+/**
+ * Converts structured product items (from coordinate extraction or Gemini fallback)
+ * into the deterministic row input format.
+ */
+export function itemsToDeterministicInputRows(
+  items: Array<{ product_name: string; variant?: string; rate: number; unit?: string }>
+): Array<{
+  rawProduct: string;
+  rawVariant: string;
+  rawRate: number;
+  rawUnit: string;
+  tableIndex: number;
+  rowIndex: number;
+}> {
+  return items.map((it, idx) => ({
+    rawProduct: it.product_name,
+    rawVariant: it.variant || '',
+    rawRate: Number(it.rate) || 0,
+    rawUnit: it.unit || 'Pcs',
+    tableIndex: 0,
+    rowIndex: idx,
+  }));
 }
