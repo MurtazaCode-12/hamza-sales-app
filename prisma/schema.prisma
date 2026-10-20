@@ -45,6 +45,7 @@ model Product {
   catalogPage String?
   types       String[] @default([])
   sizes       String[] @default([])
+  aliases     String[] @default([])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @default(now()) @updatedAt
 

@@ -74,25 +74,47 @@ export async function POST(req: NextRequest) {
     if (contentType.includes('application/json')) {
       const body = await req.json();
 
-      if (body.action === 'confirm_review_items') {
-        const items = body.items || [];
+      if (body.action === 'sync_deterministic_rows' || body.action === 'confirm_review_items') {
+        const items = body.rows || body.items || [];
         if (!Array.isArray(items) || items.length === 0) {
-          return NextResponse.json({ success: false, error: 'No items to confirm' }, { status: 400 });
+          return NextResponse.json({ success: false, error: 'No items to sync' }, { status: 400 });
         }
 
         let updatedCount = 0;
 
         for (const item of items) {
-          const { productId, hotspotId, variantKey, rate } = item;
+          const { productId, hotspotId, variantKey, rate, aliasToAdd } = item;
           const numRate = Number(rate);
           if (isNaN(numRate) || numRate <= 0) continue;
 
           // 1. Update Product table
           if (productId) {
             try {
+              const currentProd = await prisma.product.findUnique({
+                where: { id: productId },
+                select: { aliases: true, name: true },
+              });
+
+              let updatedAliases = currentProd?.aliases || [];
+              if (aliasToAdd && typeof aliasToAdd === 'string') {
+                const cleanAlias = aliasToAdd.trim();
+                const cleanLower = cleanAlias.toLowerCase();
+                const existingLowers = (currentProd?.aliases || []).map((a) => a.toLowerCase().trim());
+                if (
+                  cleanLower.length >= 2 &&
+                  cleanLower !== (currentProd?.name || '').toLowerCase().trim() &&
+                  !existingLowers.includes(cleanLower)
+                ) {
+                  updatedAliases = [...updatedAliases, cleanAlias];
+                }
+              }
+
               await prisma.product.update({
                 where: { id: productId },
-                data: { rate: numRate },
+                data: {
+                  rate: numRate,
+                  aliases: updatedAliases,
+                },
               });
               updatedCount++;
             } catch (pErr) {

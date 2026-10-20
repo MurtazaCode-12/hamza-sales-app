@@ -801,10 +801,10 @@ export default function CatalogStudio() {
               size="sm"
               variant="outline"
               onClick={() => setIsPriceListModalOpen(true)}
-              className="border-amber-600/60 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 rounded-xl text-xs font-semibold h-9 px-3 gap-1.5 shrink-0"
-              title="Upload PDF price list to scan rates with Gemini"
+              className="border-blue-600/60 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 rounded-xl text-xs font-semibold h-9 px-3 gap-1.5 shrink-0"
+              title="Upload PDF price list to extract tables deterministically"
             >
-              <FileText size={14} className="text-amber-400" />
+              <FileText size={14} className="text-blue-400" />
               <span className="hidden sm:inline">Upload Price List</span>
               <span className="sm:hidden">Prices</span>
             </Button>

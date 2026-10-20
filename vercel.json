@@ -3,6 +3,9 @@
   "functions": {
     "src/app/api/**/*": {
       "maxDuration": 60
+    },
+    "api/**/*.py": {
+      "maxDuration": 60
     }
   }
 }
