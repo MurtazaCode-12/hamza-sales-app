@@ -15,10 +15,17 @@ export const maxDuration = 60;
 /**
  * Executes Python pdfplumber extraction deterministically
  */
-async function runPythonPdfplumber(pdfBuffer: Buffer): Promise<{ success: boolean; tables: string[][][]; error?: string }> {
+async function runPythonPdfplumber(pdfBuffer: Buffer, originUrl?: string): Promise<{ success: boolean; tables: string[][][]; error?: string }> {
   // If running on Vercel production and the python serverless function is reachable via internal fetch
-  const host = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null;
-  if (host && process.env.NODE_ENV === 'production') {
+  const host =
+    originUrl ||
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : 'https://hamza-sales-app.vercel.app');
+
+  if (host) {
     try {
       const res = await fetch(`${host}/api/extract-pdf.py`, {
         method: 'POST',
@@ -27,7 +34,7 @@ async function runPythonPdfplumber(pdfBuffer: Buffer): Promise<{ success: boolea
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.success && Array.isArray(data.tables)) {
+        if (data.success && Array.isArray(data.tables) && data.tables.length > 0) {
           return { success: true, tables: data.tables };
         }
       }
@@ -106,40 +113,53 @@ async function runPythonPdfplumber(pdfBuffer: Buffer): Promise<{ success: boolea
 export async function POST(req: NextRequest) {
   try {
     const contentType = req.headers.get('content-type') || '';
+    const originUrl = req.nextUrl.origin || (req.headers.get('host') ? `https://${req.headers.get('host')}` : undefined);
+
+    let extractedTables: string[][][] | null = null;
     let pdfBuffer: Buffer | null = null;
 
-    if (contentType.includes('multipart/form-data')) {
+    if (contentType.includes('application/json')) {
+      const body = await req.json();
+      if (Array.isArray(body.tables) && body.tables.length > 0) {
+        extractedTables = body.tables;
+      } else {
+        const b64 = body.fileBase64 || body.pdfBase64 || body.file;
+        if (b64) {
+          const cleaned = b64.includes(',') ? b64.split(',')[1] : b64;
+          pdfBuffer = Buffer.from(cleaned, 'base64');
+        }
+      }
+    } else if (contentType.includes('multipart/form-data')) {
       const formData = await req.formData();
       const file = formData.get('file') as File | null;
-      if (!file) {
-        return NextResponse.json({ success: false, error: 'No file uploaded' }, { status: 400 });
+      if (file) {
+        const arrayBuffer = await file.arrayBuffer();
+        pdfBuffer = Buffer.from(arrayBuffer);
       }
-      const arrayBuffer = await file.arrayBuffer();
-      pdfBuffer = Buffer.from(arrayBuffer);
-    } else if (contentType.includes('application/json')) {
-      const body = await req.json();
-      const b64 = body.fileBase64 || body.pdfBase64 || body.file;
-      if (!b64) {
-        return NextResponse.json({ success: false, error: 'No base64 file data provided' }, { status: 400 });
-      }
-      const cleaned = b64.includes(',') ? b64.split(',')[1] : b64;
-      pdfBuffer = Buffer.from(cleaned, 'base64');
     } else {
       const arrayBuffer = await req.arrayBuffer();
-      pdfBuffer = Buffer.from(arrayBuffer);
+      if (arrayBuffer.byteLength > 0) {
+        pdfBuffer = Buffer.from(arrayBuffer);
+      }
     }
 
-    if (!pdfBuffer || pdfBuffer.length === 0) {
-      return NextResponse.json({ success: false, error: 'Empty file payload' }, { status: 400 });
-    }
+    // 1. Run deterministic pdfplumber extraction if tables not pre-provided
+    if (!extractedTables) {
+      if (!pdfBuffer || pdfBuffer.length === 0) {
+        return NextResponse.json({ success: false, error: 'Empty file payload' }, { status: 400 });
+      }
 
-    // 1. Run deterministic pdfplumber extraction
-    const extractionResult = await runPythonPdfplumber(pdfBuffer);
-    if (!extractionResult.success) {
-      return NextResponse.json(
-        { success: false, error: extractionResult.error || 'Failed to extract tables from PDF' },
-        { status: 400 }
-      );
+      const extractionResult = await runPythonPdfplumber(pdfBuffer, originUrl);
+      if (!extractionResult.success || !extractionResult.tables || extractionResult.tables.length === 0) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: extractionResult.error || 'No table rows could be identified in the uploaded PDF. Please verify the document format.',
+          },
+          { status: 400 }
+        );
+      }
+      extractedTables = extractionResult.tables;
     }
 
     // 2. Fetch existing products and hotspots from Supabase
@@ -168,7 +188,7 @@ export async function POST(req: NextRequest) {
     ]);
 
     // 3. Deterministically parse table grid into rows
-    const parsedRows = parseGridTablesToRows(extractionResult.tables);
+    const parsedRows = parseGridTablesToRows(extractedTables);
 
     // 4. Run strict matching logic against database with aliases
     const { allRows, matchedCount, unmatchedCount } = matchRowsDeterministically(
@@ -179,7 +199,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      tables: extractionResult.tables,
+      tables: extractedTables,
       rows: allRows,
       matchedCount,
       unmatchedCount,

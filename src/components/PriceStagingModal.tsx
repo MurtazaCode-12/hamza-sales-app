@@ -115,22 +115,46 @@ export function PriceStagingModal({ isOpen, onClose, onSuccess }: PriceStagingMo
       const formData = new FormData();
       formData.append("file", file);
 
-      const res = await fetch("/api/extract-pdf", {
+      // Primary Channel: Call /api/extract-pdf
+      let res = await fetch("/api/extract-pdf", {
         method: "POST",
         body: formData,
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "Failed to extract tables from PDF");
+      let data = await res.json().catch(() => null);
+
+      // Fallback Channel: If /api/extract-pdf returned empty or failed, call Python serverless directly
+      if (!res.ok || !data?.success || !Array.isArray(data?.rows) || data.rows.length === 0) {
+        setProcessStep("Connecting directly to Python table parser...");
+        try {
+          const pyRes = await fetch("/api/extract-pdf.py", {
+            method: "POST",
+            body: formData,
+          });
+          if (pyRes.ok) {
+            const pyData = await pyRes.json();
+            if (pyData?.success && Array.isArray(pyData.tables) && pyData.tables.length > 0) {
+              const matchRes = await fetch("/api/extract-pdf", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ tables: pyData.tables }),
+              });
+              if (matchRes.ok) {
+                data = await matchRes.json();
+              }
+            }
+          }
+        } catch (pyErr) {
+          console.warn("Direct Python fallback error:", pyErr);
+        }
       }
 
-      const extractedRows: DeterministicRow[] = Array.isArray(data.rows) ? data.rows : [];
+      if (!data?.success || !Array.isArray(data?.rows) || data.rows.length === 0) {
+        throw new Error(data?.error || "No table rows could be identified in the uploaded PDF. Please verify the document format.");
+      }
+
+      const extractedRows: DeterministicRow[] = data.rows;
       const productsList: DbProductItem[] = Array.isArray(data.dbProducts) ? data.dbProducts : [];
-
-      if (extractedRows.length === 0) {
-        throw new Error("No table rows could be identified in the uploaded PDF. Please verify the document format.");
-      }
 
       setRows(extractedRows);
       setDbProducts(productsList);
